@@ -2,7 +2,7 @@
 (function(){
 'use strict';
 
-const VERSION='V24.0';
+const VERSION='V24.1';
 const TOOL_IMAGES={
  '注射针':'assets/procedure/tools/注射针_display.png','DualKnife':'assets/procedure/tools/DualKnife_display.png',
  'Coagrasper':'assets/procedure/tools/Coagrasper_display.png','圈套器':'assets/procedure/tools/圈套器_display.png',
@@ -92,7 +92,7 @@ window.procedures=function(){
  const grid=document.querySelector('.procedure-grid');if(!grid)return;
  const pageTitle=document.querySelector('#main .top h1');if(pageTitle)pageTitle.textContent='内镜认知训练营';
  const pageSubtitle=document.querySelector('#main .top p');if(pageSubtitle)pageSubtitle.textContent='动画教学 · 真实阶段图 · 器械操作 · 风险处置 · 流程认知模拟';
- const intro=document.createElement('section');intro.className='card tutorial-intro';intro.innerHTML='<div><span class="pill">V24.0 · 先学后练</span><h2>先看动画教学，再进入流程认知模拟</h2><p>每个术式均按“看真实阶段图 → 观察器械运动 → 理解步骤与风险 → 再动手”的顺序训练。</p></div><span class="tutorial-count">10<br><small>套动画教程</small></span>';
+ const intro=document.createElement('section');intro.className='card tutorial-intro';intro.innerHTML='<div><span class="pill">V24.1 · 先学后练</span><h2>先看动画教学，再进入流程认知模拟</h2><p>每个术式均按“看真实阶段图 → 观察器械运动 → 理解步骤与风险 → 再动手”的顺序训练。</p></div><span class="tutorial-count">10<br><small>套动画教程</small></span>';
  grid.before(intro);
  grid.querySelectorAll('.proc-card').forEach(card=>{const id=card.querySelector('h2')?.textContent.trim();if(!TUTORIALS[id])return;card.onclick=()=>openProcedureTutorial(id);const button=card.querySelector('button');if(button)button.textContent='先看动画教学 →'});
  patchImages(grid);
@@ -124,11 +124,11 @@ const imageObserver=new MutationObserver(()=>{if(imageSyncPending)return;imageSy
 imageObserver.observe(document.documentElement,{subtree:true,childList:true});patchImages(document);
 
 function syncV23(){
- document.title='GI Resident AI V24.0 · 住培辅助教学';
+ document.title='GI Resident AI V24.1 · 住培辅助教学';
  document.querySelectorAll('.logo').forEach(x=>{const n=[...x.childNodes].find(y=>y.nodeType===Node.TEXT_NODE&&y.textContent.trim());if(n&&n.textContent!=='GI Resident AI')n.textContent='GI Resident AI'});
  document.querySelectorAll('.logo b,.logo strong').forEach(x=>{if(x.textContent!=='GI Resident AI')x.textContent='GI Resident AI'});
- document.querySelectorAll('.logo small').forEach(x=>{if(x.textContent!=='住培辅助教学 · V24.0')x.textContent='住培辅助教学 · V24.0'});
- document.querySelectorAll('.login .pill,.account-brand .pill').forEach(x=>{if(x.textContent!=='GI RESIDENT AI · V24.0')x.textContent='GI RESIDENT AI · V24.0'});
+ document.querySelectorAll('.logo small').forEach(x=>{if(x.textContent!=='住培辅助教学 · V24.1')x.textContent='住培辅助教学 · V24.1'});
+ document.querySelectorAll('.login .pill,.account-brand .pill').forEach(x=>{if(x.textContent!=='GI RESIDENT AI · V24.1')x.textContent='GI RESIDENT AI · V24.1'});
  const brand=document.querySelector('.account-brand strong');if(brand&&brand.textContent!=='GI Resident AI')brand.textContent='GI Resident AI';
 }
 syncV23();window.addEventListener('load',()=>setTimeout(()=>{syncV23();patchImages(document)},0));
