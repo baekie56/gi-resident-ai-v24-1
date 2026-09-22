@@ -4,7 +4,7 @@ from pathlib import Path
 from http.cookies import SimpleCookie
 from urllib.parse import urlsplit, unquote
 from contextlib import contextmanager
-import argparse, getpass, hashlib, hmac, json, math, os, re, secrets, sqlite3, threading, time, sys
+import argparse, base64, binascii, getpass, hashlib, hmac, json, math, os, re, secrets, sqlite3, threading, time, sys
 import urllib.request
 
 SOURCE_ROOT=Path(__file__).resolve().parent
@@ -32,10 +32,15 @@ def initialize():
         CREATE TABLE IF NOT EXISTS attempts(id TEXT NOT NULL,user_id TEXT NOT NULL REFERENCES users(id),payload TEXT NOT NULL,received REAL NOT NULL,PRIMARY KEY(user_id,id));
         CREATE TABLE IF NOT EXISTS reviews(id INTEGER PRIMARY KEY,user_id TEXT NOT NULL,attempt_id TEXT NOT NULL,teacher_id TEXT NOT NULL REFERENCES users(id),status TEXT NOT NULL,note TEXT NOT NULL,created REAL NOT NULL,FOREIGN KEY(user_id,attempt_id) REFERENCES attempts(user_id,id));
         CREATE TABLE IF NOT EXISTS activity_events(id TEXT NOT NULL,user_id TEXT NOT NULL REFERENCES users(id),event_type TEXT NOT NULL,route TEXT,item_id TEXT,attempt_id TEXT,occurred TEXT NOT NULL,details TEXT NOT NULL DEFAULT '{}',received REAL NOT NULL,PRIMARY KEY(user_id,id));
+        CREATE TABLE IF NOT EXISTS content_cases(id TEXT PRIMARY KEY,draft_payload TEXT NOT NULL,published_payload TEXT,status TEXT NOT NULL DEFAULT 'draft',version INTEGER NOT NULL DEFAULT 0,teacher_id TEXT NOT NULL REFERENCES users(id),created REAL NOT NULL,updated REAL NOT NULL,published REAL);
+        CREATE TABLE IF NOT EXISTS content_revisions(id INTEGER PRIMARY KEY AUTOINCREMENT,case_id TEXT NOT NULL,version INTEGER NOT NULL,action TEXT NOT NULL,payload TEXT NOT NULL,teacher_id TEXT NOT NULL REFERENCES users(id),created REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS content_assets(id TEXT PRIMARY KEY,filename TEXT NOT NULL,mime TEXT NOT NULL,original_name TEXT NOT NULL,teacher_id TEXT NOT NULL REFERENCES users(id),created REAL NOT NULL);
         CREATE INDEX IF NOT EXISTS idx_attempts_user_received ON attempts(user_id,received);
         CREATE INDEX IF NOT EXISTS idx_reviews_user_created ON reviews(user_id,created);
         CREATE INDEX IF NOT EXISTS idx_activity_user_received ON activity_events(user_id,received);
         CREATE INDEX IF NOT EXISTS idx_activity_type_received ON activity_events(event_type,received);
+        CREATE INDEX IF NOT EXISTS idx_content_status_updated ON content_cases(status,updated);
+        CREATE INDEX IF NOT EXISTS idx_content_revision_case ON content_revisions(case_id,id);
         ''')
     p=ROOT/'docs'/'patient_bank.json'
     if p.exists():CASE_BANK.update({x['id']:x for x in json.loads(p.read_text(encoding='utf-8'))})
@@ -105,6 +110,76 @@ def attempt_public(row):
 
 def event_public(row):
     return {'id':row['id'],'type':row['event_type'],'route':row['route'],'itemId':row['item_id'],'attemptId':row['attempt_id'],'occurredAt':row['occurred'],'receivedAt':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(row['received'])),'details':json.loads(row['details'])}
+
+def content_asset_dir():return DATABASE.parent/'content-assets'
+
+def clean_content_case(value):
+    if not isinstance(value,dict):raise ValueError('病例格式错误')
+    def text(name,maximum,minimum=1):
+        v=value.get(name)
+        if not isinstance(v,str):raise ValueError(name+'格式错误')
+        v=v.strip()
+        if not minimum<=len(v)<=maximum:raise ValueError(name+'长度错误')
+        return v
+    cid=value.get('id','')
+    if cid:
+        if not isinstance(cid,str) or not re.fullmatch(r'[A-Za-z0-9_-]{3,64}',cid):raise ValueError('病例编号格式错误')
+    else:cid='ADMIN-'+secrets.token_hex(6).upper()
+    age=value.get('age')
+    if type(age) is not int or not 0<=age<=120:raise ValueError('年龄格式错误')
+    qa=value.get('qa');tests=value.get('tests');targets=value.get('targets');pearls=value.get('pearls');decisions=value.get('decisions')
+    if not isinstance(qa,list) or not 1<=len(qa)<=20:raise ValueError('问诊规则需1—20条')
+    clean_qa=[]
+    for item in qa:
+        if not isinstance(item,dict) or not isinstance(item.get('keys'),list) or not 1<=len(item['keys'])<=10:raise ValueError('问诊规则格式错误')
+        keys=[]
+        for key in item['keys']:
+            if not isinstance(key,str) or not 1<=len(key.strip())<=80:raise ValueError('问诊关键词格式错误')
+            keys.append(key.strip())
+        answer=item.get('answer')
+        if not isinstance(answer,str) or not 1<=len(answer.strip())<=1000:raise ValueError('问诊回答格式错误')
+        clean_qa.append({'keys':keys,'answer':answer.strip()})
+    if not isinstance(tests,dict) or not 1<=len(tests)<=30:raise ValueError('检查结果需1—30条')
+    clean_tests={}
+    for name,result in tests.items():
+        if not isinstance(name,str) or not 1<=len(name.strip())<=80 or not isinstance(result,str) or not 1<=len(result.strip())<=2000:raise ValueError('检查结果格式错误')
+        clean_tests[name.strip()]=result.strip()
+    if not isinstance(targets,dict):raise ValueError('教学目标格式错误')
+    clean_targets={}
+    for key in ('diagnosis','differential','plan'):
+        items=targets.get(key)
+        if not isinstance(items,list) or not 1<=len(items)<=30:raise ValueError('教学目标不能为空')
+        if any(not isinstance(x,str) or not 1<=len(x.strip())<=200 for x in items):raise ValueError('教学目标格式错误')
+        clean_targets[key]=[x.strip() for x in items]
+    if not isinstance(pearls,list) or not 1<=len(pearls)<=20 or any(not isinstance(x,str) or not 1<=len(x.strip())<=500 for x in pearls):raise ValueError('教学要点格式错误')
+    if not isinstance(decisions,list) or not 1<=len(decisions)<=20:raise ValueError('决策题需1—20题')
+    clean_decisions=[]
+    for item in decisions:
+        if not isinstance(item,dict):raise ValueError('决策题格式错误')
+        question=item.get('q');options=item.get('o');answer=item.get('a');why=item.get('why')
+        if not isinstance(question,str) or not 1<=len(question.strip())<=500 or not isinstance(options,list) or not 2<=len(options)<=6:raise ValueError('决策题格式错误')
+        if any(not isinstance(x,str) or not 1<=len(x.strip())<=300 for x in options) or type(answer) is not int or not 0<=answer<len(options) or not isinstance(why,str) or not 1<=len(why.strip())<=1000:raise ValueError('决策题答案格式错误')
+        clean_decisions.append({'q':question.strip(),'o':[x.strip() for x in options],'a':answer,'why':why.strip()})
+    image_meta=value.get('imageMeta')
+    if image_meta is not None:
+        if not isinstance(image_meta,dict):raise ValueError('图片信息格式错误')
+        src=image_meta.get('src','')
+        if not isinstance(src,str) or not (src.startswith('/api/content-assets/') or src.startswith('https://')) or len(src)>1000:raise ValueError('图片地址格式错误')
+        source=image_meta.get('source','管理员上传');credit=image_meta.get('credit','管理员上传')
+        if not isinstance(source,str) or len(source)>1000 or not isinstance(credit,str) or len(credit)>300:raise ValueError('图片来源格式错误')
+        image_meta={'src':src,'source':source.strip() or '管理员上传','credit':credit.strip() or '管理员上传'}
+    cleaned={'id':cid,'title':text('title',200),'system':text('system',80),'level':text('level',30),'difficulty':text('difficulty',30),'age':age,'sex':text('sex',20),'chief':text('chief',300),'vitals':text('vitals',500),'intro':text('intro',3000),'qa':clean_qa,'tests':clean_tests,'targets':clean_targets,'pearls':[x.strip() for x in pearls],'image':'managed-'+cid if image_meta else None,'imageMeta':image_meta,'decisions':clean_decisions,'custom':True,'managed':True}
+    payload=json.dumps(cleaned,ensure_ascii=False,sort_keys=True,separators=(',',':'))
+    if len(payload.encode())>MAX_BODY:raise ValueError('病例内容过大')
+    return cleaned,payload
+
+def content_revision(c):return c.execute('SELECT COALESCE(MAX(id),0) FROM content_revisions').fetchone()[0]
+
+def public_content(c):
+    cases=[]
+    for row in c.execute("SELECT id,published_payload,version,published FROM content_cases WHERE status='published' AND published_payload IS NOT NULL ORDER BY published,id"):
+        case=json.loads(row['published_payload']);case['managedVersion']=row['version'];cases.append(case)
+    return {'cases':cases,'revision':content_revision(c)}
 
 def profile_clean(p,participant):
     if not isinstance(p,dict):raise ValueError('档案格式错误')
@@ -191,7 +266,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if not self.origin_ok():self.send_json({'error':'仅支持本机访问'},403);return
         route=urlsplit(self.path).path
-        if route=='/api/health':self.send_json({'ok':True,'version':VERSION,'accounts':True,'centralRecords':True,'remoteAccess':bool(getattr(self.server,'allow_remote',False)),'registrationCodeRequired':bool(os.environ.get('GI24_REGISTRATION_CODE')),'ai':bool(os.environ.get('OPENAI_API_KEY') and os.environ.get('OPENAI_MODEL'))});return
+        if route=='/api/health':self.send_json({'ok':True,'version':VERSION,'accounts':True,'centralRecords':True,'contentManagement':True,'remoteAccess':bool(getattr(self.server,'allow_remote',False)),'registrationCodeRequired':bool(os.environ.get('GI24_REGISTRATION_CODE')),'ai':bool(os.environ.get('OPENAI_API_KEY') and os.environ.get('OPENAI_MODEL'))});return
         if route=='/api/me':
             u=self.require_user()
             if u:self.send_json({'user':user_public(u)})
@@ -204,6 +279,30 @@ class Handler(SimpleHTTPRequestHandler):
                 profile=json.loads(p['payload']);profile.setdefault('v24',{})['attempts']=[attempt_public(x) for x in c.execute('SELECT payload,received FROM attempts WHERE user_id=? ORDER BY received',(u['id'],))]
                 reviews=[dict(x) for x in c.execute('SELECT attempt_id,status,note,created FROM reviews WHERE user_id=? ORDER BY id',(u['id'],))]
             self.send_json({'profile':profile,'revision':p['revision'],'reviews':reviews});return
+        if route=='/api/content':
+            u=self.require_user()
+            if not u:return
+            with database() as c:self.send_json(public_content(c))
+            return
+        if route=='/api/admin/content':
+            u=self.require_user('teacher')
+            if not u:return
+            with database() as c:
+                items=[]
+                for row in c.execute('SELECT * FROM content_cases ORDER BY updated DESC,id'):
+                    draft=json.loads(row['draft_payload']);published=json.loads(row['published_payload']) if row['published_payload'] else None
+                    items.append({'id':row['id'],'case':draft,'status':row['status'],'version':row['version'],'createdAt':row['created'],'updatedAt':row['updated'],'publishedAt':row['published'],'hasUnpublishedChanges':published!=draft})
+                revision=content_revision(c)
+            self.send_json({'items':items,'revision':revision});return
+        if route.startswith('/api/content-assets/'):
+            u=self.require_user()
+            if not u:return
+            asset_id=route.rsplit('/',1)[-1]
+            if not re.fullmatch(r'[0-9a-f]{32}\.(?:png|jpg|webp)',asset_id):self.send_error(404);return
+            with database() as c:row=c.execute('SELECT * FROM content_assets WHERE filename=?',(asset_id,)).fetchone()
+            path=content_asset_dir()/asset_id
+            if not row or not path.is_file():self.send_error(404);return
+            data=path.read_bytes();self.send_response(200);self.send_header('Content-Type',row['mime']);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         if route=='/api/teacher':
             u=self.require_user('teacher')
             if not u:return
@@ -312,6 +411,44 @@ class Handler(SimpleHTTPRequestHandler):
                 c.execute('INSERT INTO reviews(user_id,attempt_id,teacher_id,status,note,created) VALUES(?,?,?,?,?,?)',(d['userId'],d['attemptId'],u['id'],status,note,time.time()))
                 add_activity(c,d['userId'],'admin_review',attempt_id=d['attemptId'],details={'status':status,'teacherId':u['id']})
             self.send_json({'ok':True});return
+        if route=='/api/admin/content/save':
+            if u['role']!='teacher':self.send_json({'error':'需要管理员权限'},403);return
+            case,payload=clean_content_case(d.get('case'));now=time.time()
+            with database() as c:
+                c.execute('BEGIN IMMEDIATE');row=c.execute('SELECT * FROM content_cases WHERE id=?',(case['id'],)).fetchone()
+                if not row and case['id'] in CASE_BANK:self.send_json({'error':'内置病例编号不可覆盖；请使用新的病例编号'},409);return
+                if row:c.execute('UPDATE content_cases SET draft_payload=?,teacher_id=?,updated=? WHERE id=?',(payload,u['id'],now,case['id']));version=row['version']
+                else:c.execute('INSERT INTO content_cases(id,draft_payload,status,version,teacher_id,created,updated) VALUES(?,?,\'draft\',0,?,?,?)',(case['id'],payload,u['id'],now,now));version=0
+                c.execute('INSERT INTO content_revisions(case_id,version,action,payload,teacher_id,created) VALUES(?,?,?,?,?,?)',(case['id'],version,'save-draft',payload,u['id'],now));revision=content_revision(c)
+            self.send_json({'ok':True,'id':case['id'],'version':version,'revision':revision});return
+        if route in {'/api/admin/content/publish','/api/admin/content/archive'}:
+            if u['role']!='teacher':self.send_json({'error':'需要管理员权限'},403);return
+            cid=d.get('id')
+            if not isinstance(cid,str) or not re.fullmatch(r'[A-Za-z0-9_-]{3,64}',cid):raise ValueError('病例编号格式错误')
+            now=time.time()
+            with database() as c:
+                c.execute('BEGIN IMMEDIATE');row=c.execute('SELECT * FROM content_cases WHERE id=?',(cid,)).fetchone()
+                if not row:self.send_json({'error':'病例不存在'},404);return
+                if route.endswith('/publish'):
+                    version=row['version']+1;c.execute("UPDATE content_cases SET published_payload=draft_payload,status='published',version=?,teacher_id=?,updated=?,published=? WHERE id=?",(version,u['id'],now,now,cid));action='publish';payload=row['draft_payload']
+                else:
+                    version=row['version'];c.execute("UPDATE content_cases SET status='archived',teacher_id=?,updated=? WHERE id=?",(u['id'],now,cid));action='archive';payload=row['draft_payload']
+                c.execute('INSERT INTO content_revisions(case_id,version,action,payload,teacher_id,created) VALUES(?,?,?,?,?,?)',(cid,version,action,payload,u['id'],now));revision=content_revision(c)
+            self.send_json({'ok':True,'id':cid,'version':version,'status':'published' if action=='publish' else 'archived','revision':revision});return
+        if route=='/api/admin/content/image':
+            if u['role']!='teacher':self.send_json({'error':'需要管理员权限'},403);return
+            mime=d.get('mime');encoded=d.get('data');name=d.get('name','image')
+            extensions={'image/png':'png','image/jpeg':'jpg','image/webp':'webp'}
+            if mime not in extensions or not isinstance(encoded,str) or not isinstance(name,str) or len(name)>255:raise ValueError('图片格式错误')
+            try:raw=base64.b64decode(encoded,validate=True)
+            except (ValueError,binascii.Error):raise ValueError('图片编码错误')
+            if not 1<=len(raw)<=4*1024*1024:raise ValueError('图片需小于4MB')
+            signatures={'image/png':raw.startswith(b'\x89PNG\r\n\x1a\n'),'image/jpeg':raw.startswith(b'\xff\xd8\xff'),'image/webp':len(raw)>12 and raw[:4]==b'RIFF' and raw[8:12]==b'WEBP'}
+            if not signatures[mime]:raise ValueError('图片内容与格式不一致')
+            aid=hashlib.sha256(raw).hexdigest()[:32];filename=aid+'.'+extensions[mime];folder=content_asset_dir();folder.mkdir(parents=True,exist_ok=True);path=folder/filename
+            if not path.exists():path.write_bytes(raw)
+            with database() as c:c.execute('INSERT OR IGNORE INTO content_assets VALUES(?,?,?,?,?,?)',(aid,filename,mime,name,u['id'],time.time()))
+            self.send_json({'ok':True,'src':'/api/content-assets/'+filename,'mime':mime,'name':name});return
         if route=='/api/ai':self.ai(d,u);return
         self.send_json({'error':'接口不存在'},404)
     def ai(self,d,u):
@@ -320,6 +457,10 @@ class Handler(SimpleHTTPRequestHandler):
         if not key or not model:self.send_json({'error':'AI_NOT_CONFIGURED'},503);return
         if limited(('ai',u['id']),15,60):self.send_json({'error':'问答请求过于频繁'},429);return
         case=CASE_BANK.get(d.get('caseId'));msg=d.get('message','')
+        if not case and isinstance(d.get('caseId'),str):
+            with database() as c:row=c.execute("SELECT published_payload FROM content_cases WHERE id=? AND status='published'",(d['caseId'],)).fetchone()
+            if row:
+                full=json.loads(row['published_payload']);case={k:full[k] for k in ['id','age','sex','chief','intro','qa'] if k in full}
         if not case or not isinstance(msg,str) or not 1<=len(msg)<=1000:raise ValueError('病例或问题无效')
         facts={k:case[k] for k in ['age','sex','chief','intro','qa'] if k in case}
         history=d.get('history',[])

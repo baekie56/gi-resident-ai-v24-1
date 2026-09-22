@@ -62,6 +62,7 @@
      if(window.ensure24)ensure24(db.profiles[user.name]);
      db.profiles[user.name].v24=db.profiles[user.name].v24||{};db.profiles[user.name].v24.participantId=user.participantId;
    }
+   if(window.loadManagedContent24){try{await window.loadManagedContent24(true)}catch(e){window.GI24_CONTENT_WARNING='管理员内容暂时无法读取，内置训练仍可使用。'}}
    window.GI24_REVIEWS=reviews;window.GI24_SYNC='已连接集中数据库';window.app();
    if(user.role==='resident'){window.logActivity24('app_open',{route:'dashboard'});flushAttempts();flushActivities()}
  }

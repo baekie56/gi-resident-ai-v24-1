@@ -55,7 +55,7 @@
    const sync=$('#sync24');if(sync&&sync.textContent!==window.GI24_SYNC)sync.textContent=window.GI24_SYNC||'本机保存';
    const logo=document.querySelector('.logo');if(logo){const small=logo.querySelector('small');if(small&&small.textContent!=='住培辅助教学 · V24.1')small.textContent='住培辅助教学 · V24.1'}
    const top=main.querySelector('.top');if(top){const pill=top.querySelector('.pill');if(pill&&/V\d+|v\d+/.test(pill.textContent)&&!pill.dataset.clean24){pill.dataset.clean24='1';pill.textContent='V24.1 · 形成性学习'}}
-   document.querySelectorAll('#nav button').forEach(b=>{const labels={v20hub:'✨ 临床能力练习',cases:'🏥 病例推理',procedures:'🎮 内镜认知训练',report:'📈 学习记录',caseadmin:'🧩 内容审核台账'};const label=labels[b.dataset.v];if(label&&b.textContent!==label)b.textContent=label});
+   document.querySelectorAll('#nav button').forEach(b=>{const labels={v20hub:'✨ 临床能力练习',cases:'🏥 病例推理',procedures:'🎮 内镜认知训练',report:'📈 学习记录',caseadmin:window.GI24_REMOTE?'🧩 管理员内容管理':'🧩 内容审核台账'};const label=labels[b.dataset.v];if(label&&b.textContent!==label)b.textContent=label});
    shuffleChoices();
    // Label shared sampling images wherever an earlier simulation route uses them.
    document.querySelectorAll('img[src*="fnb_02_sample"],img[src*="fna_02_sample"]').forEach(img=>{if(img.dataset.shared24)return;img.dataset.shared24='1';img.alt='共享FNA细胞学示例；不是FNB组织柱';const n=document.createElement('p');n.className='image-source-note';n.textContent='共享FNA细胞学示例（非FNB组织柱），仅辅助标本类型讨论。';img.parentElement.after(n)});

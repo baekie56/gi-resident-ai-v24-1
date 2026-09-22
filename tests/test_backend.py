@@ -1,5 +1,5 @@
 """Integration tests use a temporary database and local server; no external API calls."""
-import sys, tempfile, threading, unittest, json, urllib.request, urllib.error, http.cookiejar, os
+import sys, tempfile, threading, unittest, json, urllib.request, urllib.error, http.cookiejar, os, base64
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import backend as B
@@ -107,5 +107,27 @@ class BackendTest(unittest.TestCase):
         for case in B.CASE_BANK.values():
             self.assertTrue(set(case)<=set(['id','age','sex','chief','intro','qa']))
             self.assertNotIn('targets',case);self.assertNotIn('decisions',case)
+
+    def test_18_central_content_draft_publish_edit_and_archive(self):
+        case={'id':'ADMIN-TEST-CASE','title':'管理员测试病例','system':'测试系统','level':'自建','difficulty':'入门','age':45,'sex':'女','chief':'腹痛1天','vitals':'生命体征稳定','intro':'仅用于自动化测试的虚拟病例。','qa':[{'keys':['腹痛','疼痛'],'answer':'上腹痛。'}],'tests':{'血常规':'正常'},'targets':{'diagnosis':['测试诊断'],'differential':['鉴别诊断'],'plan':['进一步检查']},'pearls':['测试教学要点'],'imageMeta':None,'decisions':[{'q':'下一步？','o':['正确选项','错误选项'],'a':0,'why':'测试解析'}]}
+        self.assertEqual(self.request(self.a,'/api/admin/content/save',{'case':case})[0],403)
+        status,saved,_=self.request(self.t,'/api/admin/content/save',{'case':case});self.assertEqual(status,200);self.assertEqual(saved['version'],0)
+        self.assertEqual(self.request(self.a,'/api/content')[1]['cases'],[])
+        status,published,_=self.request(self.t,'/api/admin/content/publish',{'id':case['id']});self.assertEqual(status,200);self.assertEqual(published['version'],1)
+        public=self.request(self.a,'/api/content')[1]['cases'];self.assertEqual(public[0]['title'],'管理员测试病例');self.assertEqual(public[0]['managedVersion'],1)
+        case['title']='管理员测试病例第二版';self.assertEqual(self.request(self.t,'/api/admin/content/save',{'case':case})[0],200)
+        self.assertEqual(self.request(self.a,'/api/content')[1]['cases'][0]['title'],'管理员测试病例')
+        dashboard=self.request(self.t,'/api/admin/content')[1];self.assertTrue(dashboard['items'][0]['hasUnpublishedChanges'])
+        self.assertEqual(self.request(self.t,'/api/admin/content/publish',{'id':case['id']})[1]['version'],2)
+        self.assertEqual(self.request(self.a,'/api/content')[1]['cases'][0]['title'],'管理员测试病例第二版')
+        self.assertEqual(self.request(self.t,'/api/admin/content/archive',{'id':case['id']})[0],200)
+        self.assertEqual(self.request(self.a,'/api/content')[1]['cases'],[])
+
+    def test_19_content_image_upload_is_validated_and_authenticated(self):
+        png=base64.b64encode(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')).decode()
+        self.assertEqual(self.request(self.a,'/api/admin/content/image',{'name':'x.png','mime':'image/png','data':png})[0],403)
+        status,result,_=self.request(self.t,'/api/admin/content/image',{'name':'x.png','mime':'image/png','data':png});self.assertEqual(status,200);self.assertTrue(result['src'].startswith('/api/content-assets/'))
+        with self.a.open(self.base+result['src'],timeout=10) as response:self.assertEqual(response.status,200);self.assertEqual(response.headers.get_content_type(),'image/png');self.assertTrue(response.read().startswith(b'\x89PNG'))
+        self.assertEqual(self.request(self.t,'/api/admin/content/image',{'name':'x.png','mime':'image/png','data':base64.b64encode(b'not-png').decode()})[0],400)
 
 if __name__=='__main__':unittest.main(verbosity=2)
