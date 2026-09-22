@@ -1,5 +1,5 @@
 """Integration tests use a temporary database and local server; no external API calls."""
-import sys, tempfile, threading, unittest, json, urllib.request, urllib.error, http.cookiejar
+import sys, tempfile, threading, unittest, json, urllib.request, urllib.error, http.cookiejar, os
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import backend as B
@@ -34,6 +34,15 @@ class BackendTest(unittest.TestCase):
     def test_01_authentication_required(self):self.assertEqual(self.request(self.client(),'/api/profile')[0],401)
     def test_02_teacher_permissions(self):self.assertEqual(self.request(self.a,'/api/teacher')[0],403)
     def test_03_roles_cannot_be_requested_by_registration(self):self.assertEqual(self.ua['role'],'resident')
+    def test_03b_registration_code_can_protect_public_signup(self):
+        old=os.environ.get('GI24_REGISTRATION_CODE');os.environ['GI24_REGISTRATION_CODE']='Class-Code-24'
+        try:
+            self.assertEqual(self.request(self.client(),'/api/register',{'name':'coded-wrong','password':'OnlyForTests-24','registrationCode':'wrong'})[0],403)
+            status,user,_=self.request(self.client(),'/api/register',{'name':'coded-user','password':'OnlyForTests-24','registrationCode':'Class-Code-24'})
+            self.assertEqual(status,200);self.assertEqual(user['user']['role'],'resident')
+        finally:
+            if old is None:os.environ.pop('GI24_REGISTRATION_CODE',None)
+            else:os.environ['GI24_REGISTRATION_CODE']=old
     def test_04_profile_and_secrets(self):
         status,j,_=self.request(self.a,'/api/profile');self.assertEqual(status,200);self.assertNotIn('password_hash',json.dumps(j));self.assertNotIn('salt',json.dumps(j))
     def test_05_cross_origin_write_blocked(self):self.assertEqual(self.request(self.a,'/api/profile',{}, {'Origin':'https://example.org'})[0],403)
@@ -43,6 +52,13 @@ class BackendTest(unittest.TestCase):
     def test_07_password_login_and_cookie(self):
         c=self.client();s,j,h=self.request(c,'/api/login',{'name':'learner-a','password':'OnlyForTests-24'});self.assertEqual(s,200);self.assertIn('HttpOnly',h['Set-Cookie']);self.assertIn('SameSite=Strict',h['Set-Cookie'])
         self.assertEqual(self.request(self.client(),'/api/login',{'name':'learner-a','password':'incorrect-value'})[0],401)
+    def test_07b_secure_cookie_for_https_deployment(self):
+        old=os.environ.get('GI24_SECURE_COOKIES');os.environ['GI24_SECURE_COOKIES']='1'
+        try:
+            s,_,h=self.request(self.client(),'/api/login',{'name':'learner-a','password':'OnlyForTests-24'});self.assertEqual(s,200);self.assertIn('Secure',h['Set-Cookie'])
+        finally:
+            if old is None:os.environ.pop('GI24_SECURE_COOKIES',None)
+            else:os.environ['GI24_SECURE_COOKIES']=old
     def test_08_account_isolation_and_append_only(self):
         a={'id':'attempt1','caseId':'TEST','kind':'case','responses':[],'decisionScore':50}
         p={'history':[],'wrong':[],'v24':{'attempts':[a]},'accounts':{'passwordHash':'must-not-save'}}

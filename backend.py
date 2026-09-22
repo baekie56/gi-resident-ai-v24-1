@@ -7,10 +7,11 @@ from contextlib import contextmanager
 import argparse, getpass, hashlib, hmac, json, math, os, re, secrets, sqlite3, threading, time, sys
 import urllib.request
 
-ROOT=Path(__file__).resolve().parent
+SOURCE_ROOT=Path(__file__).resolve().parent
+ROOT=Path(os.environ.get('GI24_WEB_ROOT',str(SOURCE_ROOT/'web' if (SOURCE_ROOT/'web'/'index.html').exists() else SOURCE_ROOT))).resolve()
 VERSION='24.0.0'
 MAX_BODY=8*1024*1024
-DATABASE=Path(os.environ.get('GI24_DATA_DIR',str(ROOT/'private')))/'gi24.sqlite3'
+DATABASE=Path(os.environ.get('GI24_DATA_DIR',str(SOURCE_ROOT/'private')))/'gi24.sqlite3'
 SESSIONS={}; LIMITS={}; LOCK=threading.RLock(); CASE_BANK={}
 
 @contextmanager
@@ -51,6 +52,24 @@ def create_user(name,password,role='resident'):
         c.execute('INSERT INTO users VALUES(?,?,?,?,?,?,?)',(uid,name,role,salt,password_hash(password,salt),pid,time.time()))
         c.execute('INSERT INTO profiles(user_id,updated) VALUES(?,?)',(uid,time.time()))
     return uid
+
+def bootstrap_teacher():
+    """Create the first cloud administrator from secret environment variables."""
+    name=os.environ.get('GI24_ADMIN_USERNAME','').strip().lower();password=os.environ.get('GI24_ADMIN_PASSWORD','')
+    if not name and not password:return False
+    if not name or not password:raise RuntimeError('GI24_ADMIN_USERNAME and GI24_ADMIN_PASSWORD must be set together')
+    with database() as c:existing=c.execute('SELECT * FROM users WHERE username=?',(name,)).fetchone()
+    if existing:
+        if existing['role']!='teacher' or not hmac.compare_digest(password_hash(password,existing['salt']),existing['password_hash']):
+            raise RuntimeError('Configured administrator does not match the existing account')
+        return False
+    create_user(name,password,'teacher');return True
+
+def secure_cookies():return os.environ.get('GI24_SECURE_COOKIES','').strip().lower() in {'1','true','yes','on'}
+
+def session_cookie(value,max_age):
+    cookie=f'gi24_session={value}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}'
+    return cookie+('; Secure' if secure_cookies() else '')
 
 def user_public(u):return {'id':u['id'],'name':u['username'],'role':u['role'],'participantId':u['participant_id']}
 
@@ -127,6 +146,7 @@ class Handler(SimpleHTTPRequestHandler):
         if sys.stderr:super().log_message(fmt,*args)
     def end_headers(self):
         for k,v in [('X-Content-Type-Options','nosniff'),('Referrer-Policy','no-referrer'),('X-Frame-Options','DENY'),('Cache-Control','no-store')]:self.send_header(k,v)
+        if secure_cookies():self.send_header('Strict-Transport-Security','max-age=31536000; includeSubDomains')
         super().end_headers()
     def origin_ok(self,write=False):
         port=self.server.server_address[1];host=self.headers.get('Host','')
@@ -171,7 +191,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if not self.origin_ok():self.send_json({'error':'仅支持本机访问'},403);return
         route=urlsplit(self.path).path
-        if route=='/api/health':self.send_json({'ok':True,'version':VERSION,'accounts':True,'centralRecords':True,'remoteAccess':bool(getattr(self.server,'allow_remote',False)),'ai':bool(os.environ.get('OPENAI_API_KEY') and os.environ.get('OPENAI_MODEL'))});return
+        if route=='/api/health':self.send_json({'ok':True,'version':VERSION,'accounts':True,'centralRecords':True,'remoteAccess':bool(getattr(self.server,'allow_remote',False)),'registrationCodeRequired':bool(os.environ.get('GI24_REGISTRATION_CODE')),'ai':bool(os.environ.get('OPENAI_API_KEY') and os.environ.get('OPENAI_MODEL'))});return
         if route=='/api/me':
             u=self.require_user()
             if u:self.send_json({'user':user_public(u)})
@@ -221,7 +241,12 @@ class Handler(SimpleHTTPRequestHandler):
         if route in {'/api/register','/api/login'}:
             if limited(('auth',self.client_address[0]),30,300):self.send_json({'error':'尝试过于频繁，请5分钟后再试'},429);return
             name=d.get('name','').strip().lower();pwd=d.get('password','')
-            if route=='/api/register':create_user(name,pwd)
+            if route=='/api/register':
+                expected=os.environ.get('GI24_REGISTRATION_CODE')
+                supplied=d.get('registrationCode','')
+                if expected and (not isinstance(supplied,str) or not hmac.compare_digest(supplied,expected)):
+                    self.send_json({'error':'班级注册码错误'},403);return
+                create_user(name,pwd)
             if not isinstance(pwd,str) or len(pwd)>128:raise ValueError('密码错误')
             with database() as c:u=c.execute('SELECT * FROM users WHERE username=?',(name,)).fetchone()
             check=password_hash(pwd,u['salt'] if u else '00'*16)
@@ -232,7 +257,7 @@ class Handler(SimpleHTTPRequestHandler):
                     if SESSIONS[k][1]<time.time():SESSIONS.pop(k,None)
                 SESSIONS[token]=(u['id'],time.time()+12*3600)
             with database() as c:add_activity(c,u['id'],'login',details={'client':self.headers.get('User-Agent','')[:500]})
-            self.send_json({'user':user_public(u)},headers={'Set-Cookie':f'gi24_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200'});return
+            self.send_json({'user':user_public(u)},headers={'Set-Cookie':session_cookie(token,43200)});return
         if route=='/api/logout':
             current=self.user()
             cookies=SimpleCookie(self.headers.get('Cookie',''));v=cookies.get('gi24_session')
@@ -240,7 +265,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if v:SESSIONS.pop(v.value,None)
             if current:
                 with database() as c:add_activity(c,current['id'],'logout')
-            self.send_json({'ok':True},headers={'Set-Cookie':'gi24_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'});return
+            self.send_json({'ok':True},headers={'Set-Cookie':session_cookie('',0)});return
         u=self.require_user()
         if not u:return
         if route=='/api/profile':
@@ -320,9 +345,12 @@ def main():
         name=input('Teacher username / 教师用户名: ').strip();pwd=getpass.getpass('Password (10+ characters) / 密码: ')
         if pwd!=getpass.getpass('Repeat password / 再次输入: '):raise SystemExit('Passwords do not match')
         create_user(name,pwd,'teacher');print('Teacher created / 教师账户已创建');return
+    created=bootstrap_teacher()
     server=ThreadingHTTPServer((args.host,args.port),Handler);server.allow_remote=args.host=='0.0.0.0'
     print(f'GI Resident AI V24.1: http://{args.host}:{args.port}/',flush=True)
+    if created:print('Cloud administrator account initialized',flush=True)
     print('Administrator setup: python backend.py --create-teacher',flush=True)
     server.serve_forever()
 
+if __name__=='__main__':main()
 

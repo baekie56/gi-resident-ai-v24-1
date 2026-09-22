@@ -1,0 +1,11 @@
+.git
+.github
+__pycache__
+*.pyc
+private
+tests
+build
+dist
+*.zip
+*.giupdate
+publisher*.key

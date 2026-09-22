@@ -1,0 +1,16 @@
+services:
+  gi-resident-ai:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      GI24_ADMIN_USERNAME: ${GI24_ADMIN_USERNAME}
+      GI24_ADMIN_PASSWORD: ${GI24_ADMIN_PASSWORD}
+      GI24_REGISTRATION_CODE: ${GI24_REGISTRATION_CODE}
+      GI24_SECURE_COOKIES: ${GI24_SECURE_COOKIES:-0}
+    volumes:
+      - gi-resident-data:/data
+
+volumes:
+  gi-resident-data:
