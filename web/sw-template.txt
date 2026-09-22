@@ -1,0 +1,12 @@
+/* Generated per content release. No API responses, credentials or learner records in cache. */
+const CACHE='gi-resident-content-__VERSION__';
+const FILES=__FILES__;
+const URLS=new Set(FILES.map(x=>new URL(x,self.registration.scope).href));
+self.addEventListener('install',e=>e.waitUntil((async()=>{const cache=await caches.open(CACHE);for(let i=0;i<FILES.length;i+=12)await cache.addAll(FILES.slice(i,i+12).map(u=>new Request(new URL(u,self.registration.scope),{cache:'reload'})))})()));
+self.addEventListener('message',e=>{if(e.data?.type==='ACTIVATE_RELEASE')self.skipWaiting()});
+self.addEventListener('activate',e=>e.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k.startsWith('gi-resident-content-')&&k!==CACHE).map(k=>caches.delete(k)));await self.clients.claim()})()));
+self.addEventListener('fetch',e=>{
+ const u=new URL(e.request.url);if(e.request.method!=='GET'||u.origin!==self.location.origin||u.pathname.includes('/api/'))return;
+ u.search='';u.hash='';const key=u.href;if(!URLS.has(key))return;
+ e.respondWith((async()=>{const cached=await (await caches.open(CACHE)).match(key);return cached||fetch(e.request)})());
+});

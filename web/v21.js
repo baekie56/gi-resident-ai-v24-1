@@ -1,0 +1,100 @@
+// GI Resident AI v21: deterministic daily adaptive plans and curated case variants.
+(function(){
+const DAILY_MODULES={
+ dynamic:{label:'动态病程',items:[{id:'dyn-bleed',title:'上消化道出血：从接诊到再评估'},{id:'dyn-cholangitis',title:'隐匿性胆管炎：识别恶化窗口'}]},
+ rescue:{label:'并发症抢救',items:[{id:'rescue-hypoxia',title:'镇静相关低氧'},{id:'rescue-perforation',title:'术中疑似穿孔'},{id:'rescue-bleeding',title:'术中活动性出血'}]},
+ reports:{label:'报告质控',items:[{id:'report-egc',title:'胃窦微隆起病灶'},{id:'report-polyp',title:'乙状结肠息肉切除'}]},
+ multimodal:{label:'多模态病例',items:[{id:'multi-egc',title:'胃表浅病变：是否具备局部治疗路径'},{id:'multi-crohn',title:'回结肠炎症：范围、活动度与组织学'},{id:'multi-bleed',title:'间歇性消化道出血：定位与时序'}]}
+};
+const VARIANT_TEMPLATES=[
+ {id:'var-bleed',title:'消化道出血参数变体',system:'消化道出血',patients:['46岁男性','63岁女性','71岁男性','58岁女性'],contexts:['近期自行服用止痛药','正在接受抗栓治疗','既往有消化性溃疡史','近期反复上腹不适'],states:[
+  {vitals:'BP 88/54 mmHg · HR 122/min',trend:'短时间内再次呕血，末梢湿冷',level:'循环不稳定'},
+  {vitals:'BP 104/66 mmHg · HR 102/min',trend:'暂无再次呕血，但复测血红蛋白下降',level:'暂时稳定'},
+  {vitals:'BP 92/58 mmHg · HR 116/min',trend:'黑便持续，站立后头晕加重',level:'高风险'}],tests:['血红蛋白呈下降趋势，尿素氮升高','凝血指标异常，交叉配血已送检','乳酸升高，复测生命体征波动'],q:'面对这个参数版本，最合理的总体路径是什么？',o:['先稳定循环并持续再评估，同时衔接病因定位和确定性止血路径','只等待单次检查结果，期间不再复测','只要暂时没有呕血即可结束评估'],a:0,why:'核心知识点不随参数改变：支持、趋势再评估、病因定位与确定性处理需要形成连续闭环。'},
+ {id:'var-cholangitis',title:'胆道感染参数变体',system:'胰胆急症',patients:['79岁女性','66岁男性','84岁男性','57岁女性'],contexts:['既往胆总管结石','胆道支架置入史','胆囊切除术后','近期出现进行性黄疸'],states:[
+  {vitals:'BP 90/56 mmHg · HR 118/min',trend:'意识较入院时迟钝',level:'器官功能风险'},
+  {vitals:'BP 106/68 mmHg · HR 105/min',trend:'寒战后精神状态变差',level:'早期恶化'},
+  {vitals:'BP 96/60 mmHg · HR 112/min',trend:'尿量减少，皮肤巩膜黄染加深',level:'高风险'}],tests:['胆汁淤积指标升高，影像提示胆管扩张','感染指标升高，胆道远端可疑梗阻','肝肾功能出现动态变化，MRCP提示梗阻线索'],q:'这些变化最需要推动哪种决策？',o:['同步支持与监测，并尽快协调解除梗阻的确定性路径','因为症状不典型，等待经典表现全部出现','只复查肝酶，不评估意识和循环'],a:0,why:'不同参数仍围绕同一能力目标：识别非典型恶化，并让支持治疗和病因控制同步推进。'},
+ {id:'var-ibd',title:'炎症性肠病参数变体',system:'IBD/肠道',patients:['24岁女性','31岁男性','42岁女性','28岁男性'],contexts:['既往诊断溃疡性结肠炎','既往回结肠型Crohn病','近期自行停用维持治疗','近期使用抗菌药物'],states:[
+  {vitals:'生命体征稳定',trend:'腹泻及便血较基线增加',level:'活动度评估'},
+  {vitals:'HR 108/min · 低热',trend:'腹痛加重并出现夜间排便',level:'需排除并发因素'},
+  {vitals:'BP 108/70 mmHg · HR 96/min',trend:'体重下降并伴贫血趋势',level:'系统评估'}],tests:['炎症指标升高，粪便感染筛查尚未完成','横断面影像提示肠壁炎症，但需结合内镜与病理','内镜显示活动性炎症，多点活检结果待回报'],q:'下一步最合理的思维方式是什么？',o:['评估疾病活动度和范围，同时主动排除感染及其他诱因','只凭既往诊断直接升级治疗，不再鉴别','单张内镜图足以解释全部症状'],a:0,why:'变体训练的稳定核心是同时完成活动度、范围、并发症和重要鉴别评估。'},
+ {id:'var-pancreatitis',title:'急性胰腺炎参数变体',system:'胰胆',patients:['39岁男性','52岁女性','68岁男性','45岁女性'],contexts:['超声提示胆囊结石','甘油三酯明显升高','近期大量饮酒','病因暂不明确'],states:[
+  {vitals:'BP 102/66 mmHg · HR 110/min',trend:'疼痛持续，尿量减少',level:'严重程度再评估'},
+  {vitals:'BP 116/72 mmHg · HR 98/min',trend:'黄疸进行性加深并出现寒战',level:'胆道指征判断'},
+  {vitals:'BP 108/70 mmHg · HR 104/min',trend:'氧合较前下降',level:'器官功能监测'}],tests:['脂肪酶升高，影像符合胰腺炎改变','肝胆指标动态变化，胆管情况仍需评估','炎症指标升高，需结合器官功能趋势判断严重程度'],q:'面对不同病因与严重程度参数，应怎样组织下一步？',o:['同步进行支持、严重程度和病因评估，再根据明确指征决定是否需要胆道干预','所有胰腺炎都直接进入同一种内镜操作','只看一次酶学结果，不再复测器官功能'],a:0,why:'病因、严重程度和器官功能趋势共同决定路径，不能把单项检查或单一术式机械套用。'}
+];
+
+let variantState=null,reviewState=null;
+function ensureV21(p){if(!p)return p;p.v21=p.v21||{};p.v21.variants=p.v21.variants||{best:0,runs:0,last:null};p.v21.daily=p.v21.daily||{};return p}
+function v21Profile(){return ensureV21(prof())}
+function localDateKey(d=new Date()){let y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${day}`}
+function hashSeed(text){let h=2166136261;for(let i=0;i<text.length;i++){h^=text.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0}
+function rngFrom(seed){let a=seed>>>0;return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function pick(a,rng){return a.length?a[Math.floor(rng()*a.length)]:null}
+function dayStamp(x){return x&&localDateKey(new Date(x))}
+function weightedReason(rng,available){let r=rng(),want=r<.5?'weak':r<.8?'review':'new';if(available[want]?.length)return want;return ['weak','review','new'].find(k=>available[k]?.length)||'new'}
+function reasonLabel(r){return r==='weak'?'弱项强化':r==='review'?'到期复习':'新内容'}
+
+function caseTask(p,rng){let wrongIds=new Set(p.wrong.filter(w=>w.caseId&&!String(w.caseId).startsWith('V20')).map(w=>w.caseId));let completed=GI_CASES.filter(c=>p.scores[c.id]!=null),available={weak:GI_CASES.filter(c=>(p.scores[c.id]!=null&&p.scores[c.id]<80)||wrongIds.has(c.id)),review:completed.filter(c=>{let due=p.v24?.reviewDue?.[c.id];return due&&due<=new Date().toISOString()}),new:GI_CASES.filter(c=>p.scores[c.id]==null)};let reason=weightedReason(rng,available),c=pick(available[reason],rng)||pick(GI_CASES,rng);return{kind:'case',id:c.id,title:c.title,subtitle:`${c.system} · ${c.difficulty} · ${c.age}岁${c.sex}性`,source:'病例库',reason,action:`startCase('${c.id}')`}}
+function procedureTask(p,rng){let completed=GI_PROCEDURES.filter(x=>p.procedures[x.id]),available={weak:completed.filter(x=>(p.procedures[x.id].latest??p.procedures[x.id].best??0)<80),review:completed.filter(x=>{let due=p.v24?.reviewDue?.[x.id];return due&&due<=new Date().toISOString()}),new:GI_PROCEDURES.filter(x=>!p.procedures[x.id])};let reason=weightedReason(rng,available),x=pick(available[reason],rng)||pick(GI_PROCEDURES,rng);return{kind:'procedure',id:x.id,title:`${x.name} 术式训练`,subtitle:`${x.full} · 步骤、器械与风险决策`,source:'术式库',reason,action:`openProcedure('${x.id}')`}}
+function moduleTask(p,rng){let kinds=Object.keys(DAILY_MODULES),available={weak:kinds.filter(k=>(p.v20[k]?.runs||0)>0&&(p.v20[k]?.latest??p.v20[k]?.best??0)<80),review:kinds.filter(k=>p.v24?.reviewDue?.[k]&&p.v24.reviewDue[k]<=new Date().toISOString()),new:kinds.filter(k=>!(p.v20[k]?.runs||0))};let reason=weightedReason(rng,available),kind=pick(available[reason],rng)||pick(kinds,rng),item=pick(DAILY_MODULES[kind].items,rng),calls={dynamic:'startDynamic',rescue:'startRescue',reports:'startReportLab',multimodal:'startMultimodal'};return{kind:'v20',module:kind,id:item.id,title:item.title,subtitle:`${DAILY_MODULES[kind].label} · 今日指定项目`,source:'v20能力库',reason,action:`${calls[kind]}('${item.id}')`}}
+function reviewTask(p,rng){let hasWrong=p.wrong.length>0;return{kind:'review',id:hasWrong?'wrong-review':'image-review',title:hasWrong?'今日错题再现':'真实内镜图像微复习',subtitle:hasWrong?`从 ${p.wrong.length} 条待复习记录中抽取1条`:'从已有真实图像题库中抽取1题',source:hasWrong?'错题本':'图像题库',reason:'review',action:'startDailyReview()'}}
+function variantTask(day,name){let v=buildVariant(day,name);return{kind:'variant',id:v.id,title:v.title,subtitle:`${v.system} · 今日参数组合`,source:'预设参数练习（待专科审核）',reason:'new',action:'startDailyVariant()'}}
+function buildDailyPlan(p=v21Profile(),day=localDateKey(),name=session?.name||'resident'){return GI24.frozenPlan(p,day,()=>{let rng=rngFrom(hashSeed(`${day}|${name}|daily-plan-v24`));return[caseTask(p,rng),procedureTask(p,rng),moduleTask(p,rng),reviewTask(p,rng),variantTask(day,name)]})}
+function buildVariant(day=localDateKey(),name=session?.name||'resident'){let rng=rngFrom(hashSeed(`${day}|${name}|variant-v21`)),t=pick(VARIANT_TEMPLATES,rng),patient=pick(t.patients,rng),context=pick(t.contexts,rng),state=pick(t.states,rng),test=pick(t.tests,rng);return{...t,patient,context,state,test,seed:`${day}-${String(hashSeed(day+'|'+name)).slice(-5)}`}}
+function dailyRecord(){let p=v21Profile(),day=localDateKey();p.v21.daily[day]=p.v21.daily[day]||{};return p.v21.daily[day]}
+function isDailyTaskDone(t,p=v21Profile(),day=localDateKey()){if(t.kind==='case')return p.history.some(h=>h.caseId===t.id&&dayStamp(h.at)===day);if(t.kind==='procedure')return dayStamp(p.procedures[t.id]?.last)===day;if(t.kind==='v20')return p.v20.history.some(h=>h.kind===t.module&&h.title===t.title&&dayStamp(h.at)===day);if(t.kind==='review')return!!p.v21.daily[day]?.review;if(t.kind==='variant')return!!p.v21.daily[day]?.variant;return false}
+function dailyProgress(p=v21Profile(),day=localDateKey()){let plan=buildDailyPlan(p,day,session?.name||'resident');return{done:plan.filter(t=>isDailyTaskDone(t,p,day)).length,total:plan.length,plan}}
+
+function dailyTraining(){let p=v21Profile(),day=localDateKey(),progress=dailyProgress(p,day);save();let pct=Math.round(progress.done/progress.total*100);$('#main').innerHTML=head('每日自适应训练','同一学员当天看到固定任务，第二天自动换题；当日清单首次生成后冻结，次日根据最新记录调整。','DAILY ADAPTIVE')+`<section class="daily-hero"><div><span class="daily-date">${day} · ${esc(session.name)}</span><h2>${progress.done===progress.total?'今日训练已完成':'今天先解决最值得练的内容'}</h2><p>系统从病例、术式、错题、v20能力模块和预设病例骨架中抽取任务。病例事实与评分规则保持固定，只改变预设参数组合（待专科审核）。</p></div><div class="daily-progress"><strong>${progress.done}/${progress.total}</strong><span>今日完成</span><div class="daily-progressbar"><i style="width:${pct}%"></i></div></div></section><div class="daily-policy"><span class="policy-chip"><b>50%</b> 弱项优先权重</span><span class="policy-chip"><b>30%</b> 到期复习权重</span><span class="policy-chip"><b>20%</b> 新内容权重</span><span class="policy-chip">日期＋学员固定种子</span></div><div class="daily-list">${progress.plan.map((t,i)=>dailyTaskCard(t,i,isDailyTaskDone(t,p,day))).join('')}</div><div class="daily-note"><b>为什么今天不会不断变化？</b> 为保证训练可复盘，当日首次抽题后保存具体任务清单；跨天后种子变化，系统会重新读取最新低分、错题和完成记录。完全离线也可以正常生成。</div>`}
+function dailyTaskCard(t,i,done){return `<article class="daily-task ${done?'done':''}"><div class="daily-task-index">${done?'✓':String(i+1).padStart(2,'0')}</div><div><div class="daily-meta"><span class="daily-reason ${t.reason}">${reasonLabel(t.reason)}</span><span class="daily-source">${t.source}</span></div><h3>${t.title}</h3><p>${t.subtitle}</p></div>${done?'<span class="daily-done">今日已完成</span>':`<button class="btn" onclick="${t.action}">开始训练</button>`}</article>`}
+
+function startDailyVariant(){if(window.beginModule24)beginModule24('variant','daily-variant');let day=localDateKey();variantState={day,variant:buildVariant(day,session.name),answered:false,picked:null};renderDailyVariant()}
+function renderDailyVariant(){let V=variantState.variant,S=variantState;$('#main').innerHTML=head(V.title,`${V.system} · 由预设病例骨架生成的今日参数组合`,'DAILY VARIANT')+`<div class="variant-shell"><section class="variant-chart"><span class="v20-badge">CURATED VARIANT</span><div class="variant-patient"><div><strong>${V.patient}</strong><br><span>${V.context}</span></div><span class="variant-seed">${V.seed}</span></div><div class="variant-facts"><div class="variant-fact"><span>当前生命体征</span><b>${V.state.vitals}</b></div><div class="variant-fact"><span>动态变化</span><b>${V.state.trend}</b></div><div class="variant-fact"><span>检查线索</span><b>${V.test}</b></div><div class="variant-fact"><span>训练重点</span><b>${V.state.level}</b></div></div></section><section class="card variant-question"><span class="v20-badge">核心规则保持不变</span><h2>${V.q}</h2><div class="choices">${V.o.map((o,i)=>`<div class="choice ${S.answered?(i===V.a?'correct':i===S.picked?'wrong':''):''}" data-variant="${i}">${String.fromCharCode(65+i)}. ${o}</div>`).join('')}</div>${S.answered?`<div class="feedback ${S.picked===V.a?'good':'mid'}"><b>${S.picked===V.a?'✓ 已抓住稳定知识点':'✗ 被变化参数带偏了'}</b><br>${V.why}</div><div class="row" style="margin-top:12px"><button class="btn" onclick="dailyTraining()">返回今日任务</button><button class="btn ghost" onclick="startDailyVariant()">重看今日变体</button></div>`:''}</section></div><div class="daily-note"><b>生成边界：</b>年龄、背景、生命体征、趋势和检查线索从预设列表（待专科审核）中组合；核心诊疗逻辑、正确答案和解释不由随机过程改写。</div>`;$$('[data-variant]').forEach(x=>x.onclick=()=>answerDailyVariant(+x.dataset.variant))}
+function answerDailyVariant(i){if(variantState.answered)return;let V=variantState.variant,p=v21Profile(),d=dailyRecord(),score=i===V.a?100:0;if(window.moduleResponse24)moduleResponse24(V.q,V.o,i,i===V.a,V.a,V.why);variantState.answered=true;variantState.picked=i;d.variant={id:V.id,title:V.title,score,at:new Date().toISOString()};p.v21.variants.best=Math.max(p.v21.variants.best||0,score);p.v21.variants.runs=(p.v21.variants.runs||0)+1;p.v21.variants.last=d.variant.at;p.xp=(p.xp||0)+(i===V.a?15:5);if(i!==V.a){p.wrong.unshift({caseId:'V21-VARIANT',caseTitle:V.title,q:V.q,picked:V.o[i],right:V.o[V.a],why:V.why,at:d.variant.at});p.wrong=p.wrong}if(window.finishModule24)finishModule24('variant',V.title,score);save();renderDailyVariant()}
+
+function startDailyReview(){if(window.beginModule24)beginModule24('review','daily-review');let p=v21Profile(),day=localDateKey(),rng=rngFrom(hashSeed(`${day}|${session.name}|review-v21`));if(p.wrong.length){let w=pick(p.wrong.slice(0,Math.min(20,p.wrong.length)),rng),opts=[w.right,w.picked].filter((x,i,a)=>x&&a.indexOf(x)===i);reviewState={day,type:'wrong',title:w.caseTitle,q:w.q,o:opts.sort(()=>rng()-.5),a:w.right,why:w.why,answered:false,picked:null}}else{let q=pick(GI_IMAGE_QUIZ,rng),im=GI_IMAGES[q.img];reviewState={day,type:'image',title:q.title||'真实内镜图像',q:q.q,o:q.o,a:q.o[q.a],why:q.why,img:im?.src,answered:false,picked:null}}renderDailyReview()}
+function renderDailyReview(){let S=reviewState;$('#main').innerHTML=head('今日微复习',S.title,S.type==='wrong'?'来自你的错题本':'来自真实图像题库')+`<div class="card daily-review-card">${S.img?`<img class="review-image" src="${S.img}" alt="今日复习图像">`:''}<h2>${S.q}</h2><div class="choices">${S.o.map((o,i)=>`<div class="choice ${S.answered?(o===S.a?'correct':i===S.picked?'wrong':''):''}" data-review="${i}">${String.fromCharCode(65+i)}. ${o}</div>`).join('')}</div>${S.answered?`<div class="review-answer"><b>${S.o[S.picked]===S.a?'✓ 回忆正确':'答案需要再巩固'}</b><br>${S.why}</div><button class="btn" style="margin-top:12px" onclick="finishDailyReview()">完成本次复习</button>`:''}</div>`;$$('[data-review]').forEach(x=>x.onclick=()=>answerDailyReview(+x.dataset.review))}
+function answerDailyReview(i){if(reviewState.answered)return;reviewState.answered=true;reviewState.picked=i;renderDailyReview()}
+function finishDailyReview(){if(reviewState.finished)return;reviewState.finished=true;if(window.moduleResponse24)moduleResponse24(reviewState.q,reviewState.o,reviewState.picked,reviewState.o[reviewState.picked]===reviewState.a,reviewState.o.indexOf(reviewState.a),reviewState.why);if(window.finishModule24)finishModule24('review',reviewState.title,reviewState.o[reviewState.picked]===reviewState.a?100:0);let p=v21Profile(),d=dailyRecord(),ok=reviewState.o[reviewState.picked]===reviewState.a;d.review={title:reviewState.title,ok,at:new Date().toISOString()};if(reviewState.type==='image'){p.img.total++;if(ok)p.img.ok++}p.xp=(p.xp||0)+(ok?8:3);save();dailyTraining()}
+
+function appendDailyDashboard(){let host=$('#main');if(!host||$('#dailyDash'))return;let x=dailyProgress(),pct=Math.round(x.done/x.total*100),box=document.createElement('div');box.id='dailyDash';box.innerHTML=`<section class="daily-hero"><div><span class="daily-date">${localDateKey()} · DAILY PLAN</span><h2>${x.done===x.total?'今日训练已经完成':'今日自适应任务已生成'}</h2><p>依据低分、错题、到期复习和未学内容，为 ${esc(session.name)} 生成当天固定的5项任务。</p><button class="btn" style="margin-top:12px;background:#fff;color:#175cd3" onclick="nav('daily')">查看今日任务</button></div><div class="daily-progress"><strong>${x.done}/${x.total}</strong><span>今日完成</span><div class="daily-progressbar"><i style="width:${pct}%"></i></div></div></section>`;let anchor=host.querySelector('#v20Dash')||host.querySelector('.section');if(anchor)host.insertBefore(box,anchor);else host.appendChild(box)}
+function appendV21Report(){let host=$('#main');if(!host||$('#v21Report'))return;let p=v21Profile(),today=dailyProgress(p),days=Object.keys(p.v21.daily).length,box=document.createElement('div');box.id='v21Report';box.innerHTML=`<div class="section"><h2>每日自适应训练</h2><small>v21</small></div><div class="grid g3">${metric('今日完成',`${today.done}/${today.total}`,'每日任务')}${metric('病例变体最好',(p.v21.variants.best||0)+'%',`${p.v21.variants.runs||0} 轮`)}${metric('训练天数',days,'本机记录')}</div>`;host.appendChild(box)}
+function appendV21Teacher(){let host=$('#main');if(!host||$('#v21Teacher'))return;let day=localDateKey(),rows=Object.keys(db.profiles).map(n=>{let p=ensureV21(ensureProfile(db.profiles[n])),oldSession=session;session={...session,name:n};let x=dailyProgress(p,day);session=oldSession;return[n,`${x.done}/${x.total}`,p.v21.variants.best||0,p.v21.variants.runs||0,Object.keys(p.v21.daily).length]});let box=document.createElement('div');box.id='v21Teacher';box.innerHTML=`<div class="section"><h2>每日训练执行情况</h2><small>${day}</small></div><div class="card" style="overflow:auto"><table class="table daily-teacher-table"><tr><th>学员</th><th>今日完成</th><th>变体最好</th><th>变体轮次</th><th>训练天数</th></tr>${rows.map(r=>`<tr><td>${esc(r[0])}</td><td><span class="daily-count">${r[1]}</span></td><td>${r[2]}%</td><td>${r[3]}</td><td>${r[4]}</td></tr>`).join('')}</table></div>`;host.appendChild(box)}
+function syncV21(){document.title='GI Resident AI V24.0 · 住培辅助教学';document.querySelectorAll('.logo small').forEach(x=>x.textContent='DAILY ADAPTIVE TRAINING · V21');document.querySelectorAll('.login .pill').forEach(x=>x.textContent='GI Resident AI · v21');let lp=document.querySelector('.login-card>p');if(lp)lp.textContent='每日自适应训练 · 动态病程 · 并发症抢救 · 报告质控 · 多模态联合推理';}
+
+// Keep every instrument option and image caption limited to its exact instrument name.
+function normalizeToolLabels(root=document){
+ const cards=root.querySelectorAll?.('.v6-tool,.v7-tool,.rp-tool,.v12tool,.v13tool,.v14-tool,.v15tool,.v16tool')||[];
+ cards.forEach(card=>{
+  const img=card.querySelector('img');
+  const name=(card.dataset.tool||img?.alt||card.querySelector('.tname,.name,b')?.textContent||'').trim();
+  if(!name)return;
+  if(img&&img.alt!==name)img.alt=name;
+  card.querySelectorAll('.tsub,.sub,small').forEach(x=>x.remove());
+  const label=card.querySelector('.tname,.name,b');if(label&&label.textContent!==name)label.textContent=name;
+ });
+ root.querySelectorAll?.('.v19photo')?.forEach(photo=>{
+  const name=photo.closest('.v19card')?.dataset.tool||photo.querySelector('img')?.alt||'';
+  if(!name)return;
+  const img=photo.querySelector('img'),caption=photo.querySelector('span');
+  if(img&&img.alt!==name)img.alt=name;if(caption&&caption.textContent!==name)caption.textContent=name;
+ });
+}
+const toolLabelObserver=new MutationObserver(()=>normalizeToolLabels(document));
+toolLabelObserver.observe(document.documentElement,{subtree:true,childList:true});
+
+const oldEnsure=window.ensureProfile;window.ensureProfile=function(p){return ensureV21(oldEnsure?oldEnsure(p):p)};Object.values(db.profiles).forEach(ensureV21);save();
+const oldBuildNav=window.buildNav;window.buildNav=function(){if(session.role==='teacher')return oldBuildNav();let items=[['dashboard','🏠 今日学习'],['daily','☀️ 每日自适应训练'],['v20hub','✨ v20能力闭环'],['cases','🏥 AI虚拟病房'],['dynamic','⏱️ 动态病程'],['rescue','🚨 并发症抢救'],['reports','📋 报告与质控'],['multimodal','🧩 多模态病例'],['anatomy','🧭 镜下解剖地图'],['procedures','🎮 内镜操作训练营'],['images','🔬 真实内镜闯关'],['wrong','📝 错题本'],['report','📈 能力报告'],['refs','📚 指南/图片来源'],['logout','↩ 退出']];$('#nav').innerHTML=items.map(x=>`<button data-v="${x[0]}">${x[1]}</button>`).join('');$$('#nav button').forEach(b=>b.onclick=()=>b.dataset.v==='logout'?logout():nav(b.dataset.v))};
+const oldNav=window.nav;window.nav=function(v){if(v==='daily'){$$('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.v===v));dailyTraining();return}oldNav(v)};
+const oldDashboard=window.dashboard;window.dashboard=function(){oldDashboard();appendDailyDashboard()};
+const oldReport=window.report;window.report=function(){oldReport();appendV21Report()};
+const oldTeacher=window.teacher;window.teacher=function(){oldTeacher();appendV21Teacher()};
+const oldApp=window.app;window.app=function(){oldApp();syncV21()};
+const oldLogin=window.login;window.login=function(){oldLogin();syncV21()};
+Object.assign(window,{dailyTraining,startDailyVariant,answerDailyVariant,startDailyReview,answerDailyReview,finishDailyReview});
+window.__GI_V21_TEST={localDateKey,hashSeed,rngFrom,buildVariant,buildDailyPlan,isDailyTaskDone};
+function refresh(){syncV21();normalizeToolLabels(document);if(session){buildNav();nav(session.role==='teacher'?'teacher':'dashboard')}}
+if(document.readyState==='loading')window.addEventListener('load',refresh);else setTimeout(refresh,0);
+})();

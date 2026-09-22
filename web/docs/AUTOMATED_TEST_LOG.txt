@@ -1,0 +1,140 @@
+$ node scripts/build_metadata.cjs
+{
+  "softwareVersion": "24.0.0",
+  "bankVersion": "2026-09-06.1",
+  "cases": 32,
+  "decisions": 98,
+  "caseIds": [
+    "UGIB-PU",
+    "UGIB-VARIX",
+    "MW-TEAR",
+    "DIEULAFOY",
+    "LGIB-DIV",
+    "GAVE",
+    "GERD",
+    "BARRETT",
+    "ESCC-EARLY",
+    "ACHALASIA",
+    "EOE",
+    "CANDIDA",
+    "HP-REF",
+    "EGC",
+    "GIST",
+    "MALT",
+    "PHG",
+    "UC",
+    "CROHN",
+    "CDIFF",
+    "MICROCOL",
+    "IBS",
+    "CELIAC",
+    "ISCHEMIC-COL",
+    "AP-BILIARY",
+    "AP-HTG",
+    "CHOLANGITIS",
+    "CBD-STONE",
+    "PANCREAS-CA",
+    "PSC",
+    "SBP",
+    "HE"
+  ],
+  "modules": {
+    "DYNAMIC_CASES": 2,
+    "RESCUE_CASES": 3,
+    "REPORT_CASES": 2,
+    "MULTI_CASES": 3
+  },
+  "procedures": 9,
+  "images": 186,
+  "contentReviewRows": 51,
+  "imagesWithSourceClue": 55,
+  "allMedicalReview": "pending",
+  "allAssetPermissions": "pending"
+}
+
+
+$ node --test tests/core.test.cjs
+✔ no false credit: 急性胆囊炎 -> 急性胆管炎 (1.306ms)
+✔ no false credit: 不考虑急性胆囊炎 -> 急性胆管炎 (0.1449ms)
+✔ no false credit: 暂不进行内镜止血 -> 内镜止血 (0.235ms)
+✔ no false credit: 无需使用抗菌药 -> 尽早抗菌药 (0.0836ms)
+✔ no false credit: 未见活动性出血 -> 活动性出血 (0.1342ms)
+✔ no false credit: 暂不考虑胃食管反流病 -> 胃食管反流病 (0.0965ms)
+✔ no false credit: 排除急性胆管炎 -> 急性胆管炎 (0.0816ms)
+✔ no false credit: 急性胆管炎已排除 -> 急性胆管炎 (0.0911ms)
+✔ no false credit: 不能排除急性胆管炎 -> 急性胆管炎 (0.0857ms)
+✔ no false credit: 如果出血再进行内镜止血 -> 内镜止血 (0.1757ms)
+✔ no false credit: 不需要复苏 -> 复苏 (0.0691ms)
+✔ no false credit: 需要复苏，但是不需要复苏 -> 复苏 (0.1319ms)
+✔ no false credit: 质子泵抑制剂 -> 大剂量PPI (0.1324ms)
+✔ no false credit: PPI -> 静脉PPI (0.1998ms)
+✔ no false credit: 24小时内内镜 -> 12小时内内镜 (0.0588ms)
+✔ no false credit: 12cm -> 12mm (0.0708ms)
+✔ no false credit: 112 -> 12 (0.0609ms)
+✔ no false credit: EUS-FNA -> FNB (0.0328ms)
+✔ no false credit: IBD -> UC (0.0248ms)
+✔ no false credit: ERCP -> MRCP (0.0288ms)
+✔ no false credit: 未见即时并发症不能确定 -> 未见即时并发症 (0.0269ms)
+✔ no false credit: 存在即时并发症 -> 未见即时并发症 (0.0279ms)
+✔ explicit equivalent: GERD (0.0857ms)
+✔ explicit equivalent: 建议使用静脉PPI (0.0299ms)
+✔ explicit equivalent: 予抗生素 (0.027ms)
+✔ explicit equivalent: 明确急性胆管炎 (0.0232ms)
+✔ explicit equivalent: 无即时并发症 (0.0238ms)
+✔ explicit equivalent: 内镜下止血 (0.0249ms)
+✔ aliases are non-recursive and preserve spelling differences (0.0775ms)
+✔ frozen daily plan survives completion, refresh and profile reload (1.4219ms)
+✔ actual V21 scheduler remains fixed after GERD completion (3.1069ms)
+✔ report completeness is not medical credit (0.1957ms)
+✔ shuffle keeps option identity and answer index mapping (0.4147ms)
+✔ research export does not leak account fields or narrative by default (0.2911ms)
+✔ CSV escapes formulas and preserves multiline values (0.1804ms)
+✔ backup import rejects wrong format and reserved profile names (0.5975ms)
+ℹ tests 36
+ℹ suites 0
+ℹ pass 36
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 95.7572
+
+
+$ python tests/test_backend.py
+test_01_authentication_required (__main__.BackendTest.test_01_authentication_required) ... ok
+test_02_teacher_permissions (__main__.BackendTest.test_02_teacher_permissions) ... ok
+test_03_roles_cannot_be_requested_by_registration (__main__.BackendTest.test_03_roles_cannot_be_requested_by_registration) ... ok
+test_04_profile_and_secrets (__main__.BackendTest.test_04_profile_and_secrets) ... ok
+test_05_cross_origin_write_blocked (__main__.BackendTest.test_05_cross_origin_write_blocked) ... ok
+test_06_private_files_blocked (__main__.BackendTest.test_06_private_files_blocked) ... 127.0.0.1 - - [06/Sep/2026 17:57:39] code 403, message Forbidden
+127.0.0.1 - - [06/Sep/2026 17:57:39] "GET /private/gi24.sqlite3 HTTP/1.1" 403 -
+127.0.0.1 - - [06/Sep/2026 17:57:39] code 403, message Forbidden
+127.0.0.1 - - [06/Sep/2026 17:57:39] "GET /backend.py HTTP/1.1" 403 -
+127.0.0.1 - - [06/Sep/2026 17:57:39] code 403, message Forbidden
+127.0.0.1 - - [06/Sep/2026 17:57:39] "GET /tests/test_backend.py HTTP/1.1" 403 -
+127.0.0.1 - - [06/Sep/2026 17:57:39] code 403, message Forbidden
+127.0.0.1 - - [06/Sep/2026 17:57:39] "GET /%2e%2e/server.py HTTP/1.1" 403 -
+ok
+test_07_password_login_and_cookie (__main__.BackendTest.test_07_password_login_and_cookie) ... ok
+test_08_account_isolation_and_append_only (__main__.BackendTest.test_08_account_isolation_and_append_only) ... ok
+test_09_teacher_review_separate_from_answer (__main__.BackendTest.test_09_teacher_review_separate_from_answer) ... ok
+test_10_logout_revokes (__main__.BackendTest.test_10_logout_revokes) ... ok
+test_11_unknown_and_malformed_requests (__main__.BackendTest.test_11_unknown_and_malformed_requests) ... ok
+test_12_ai_needs_opt_in (__main__.BackendTest.test_12_ai_needs_opt_in) ... ok
+test_13_atomic_rejection (__main__.BackendTest.test_13_atomic_rejection) ... ok
+test_14_password_db_not_plaintext (__main__.BackendTest.test_14_password_db_not_plaintext) ... ok
+test_15_reject_unsafe_record_types (__main__.BackendTest.test_15_reject_unsafe_record_types) ... ok
+test_16_reject_unsafe_nested_fields (__main__.BackendTest.test_16_reject_unsafe_nested_fields) ... ok
+test_17_patient_bank_has_no_answer_key (__main__.BackendTest.test_17_patient_bank_has_no_answer_key) ... ok
+
+----------------------------------------------------------------------
+Ran 17 tests in 1.745s
+
+OK
+
+
+$ node tests/check_assets.cjs
+PASS: 216 literal image references, HTML dependencies and 32 patient records
+
+
+PASS: JavaScript syntax checked for 29 files.

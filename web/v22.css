@@ -1,0 +1,22 @@
+/* GI Resident AI v22: personal local accounts and mobile back navigation */
+.account-login{min-height:100vh;display:grid;place-items:center;padding:20px;background:linear-gradient(145deg,#081a31,#174d82 58%,#176b69)}
+.account-card{width:min(720px,96vw);background:#fff;border-radius:24px;padding:28px;box-shadow:0 30px 80px rgba(0,0,0,.32)}
+.account-brand{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.account-brand strong{font-size:22px;color:#0d1b2f}.account-card h1{margin:12px 0 6px}.account-lead{margin:0;color:#667085;line-height:1.65}
+.account-tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;background:#f2f4f7;border-radius:13px;padding:5px;margin:20px 0 14px}
+.account-tabs button{border:0;border-radius:9px;background:transparent;padding:10px;font-weight:800;color:#667085;cursor:pointer}
+.account-tabs button.active{background:#fff;color:#165dff;box-shadow:0 2px 8px rgba(16,24,40,.08)}
+.account-panel{display:none}.account-panel.active{display:block}.account-panel label{display:block;font-size:12px;font-weight:800;color:#344054;margin:12px 0 5px}
+.account-panel input{width:100%;border:1px solid #d0d5dd;border-radius:11px;padding:12px;background:#fff;outline:none}
+.account-panel input:focus{border-color:#2e90fa;box-shadow:0 0 0 3px rgba(46,144,250,.14)}
+.account-panel .btn{width:100%;margin-top:16px;padding:12px}
+.account-message{display:none;margin-top:12px;padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.6}
+.account-message.show{display:block}.account-message.bad{background:#fef3f2;color:#b42318}.account-message.good{background:#ecfdf3;color:#067647}
+.account-note{margin-top:16px;padding:12px;background:#eff8ff;color:#175cd3;border:1px solid #b2ddff;border-radius:11px;font-size:12px;line-height:1.65}
+.teacher-entry{margin-top:14px;border-top:1px solid #eaecf0;padding-top:14px}.teacher-entry summary{cursor:pointer;color:#667085;font-size:12px;font-weight:800}
+.teacher-row{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:10px}.teacher-row input{border:1px solid #d0d5dd;border-radius:10px;padding:10px}
+.mobile-up{display:none;border:1px solid #cfd9e8;background:rgba(255,255,255,.96);color:#1d2939;border-radius:999px;padding:9px 13px;font-weight:800;box-shadow:0 5px 18px rgba(16,24,40,.13);cursor:pointer}
+.mobile-up[hidden]{display:none!important}
+.profile .account-kind{display:block;margin-top:3px}.profile .account-badge{display:inline-block;margin-top:7px;font-size:10px;color:#b9d9ff;background:#17477e;border-radius:999px;padding:4px 7px}
+@media(max-width:900px){.mobile-up{display:inline-flex;align-items:center;gap:6px;position:sticky;top:8px;z-index:28;margin:0 0 12px}.main{overflow:visible}.account-card{padding:22px}.account-brand{align-items:flex-start;flex-direction:column}}
+@media(max-width:520px){.account-login{padding:10px}.account-card{width:100%;border-radius:20px;padding:19px}.account-card h1{font-size:24px}.teacher-row{grid-template-columns:1fr}.teacher-row .btn{width:100%}}
