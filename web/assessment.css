@@ -1,0 +1,6 @@
+.assessment-intro{border:1px solid #a8d7d0;background:linear-gradient(135deg,#f7fffd,#f6f9ff)}
+.assessment-dash{border-left:5px solid #0d8074;background:linear-gradient(135deg,#f1fbf8,#fff)}
+.assessment-progress{height:10px;margin:0 0 18px;border-radius:999px;background:#dfeaec;overflow:hidden}.assessment-progress i{display:block;height:100%;background:linear-gradient(90deg,#0d8074,#2186b4);transition:width .2s ease}
+.assessment-question h2{margin:16px 0 20px;font-size:22px;line-height:1.55}.assessment-question .choices{display:grid;gap:10px}.assessment-question .choice{margin:0}.assessment-question [role=status]{margin-top:15px}.assessment-question #assessmentNext24{margin-top:14px}
+.assessment-footnote{max-width:900px;margin:12px auto;color:#607780}.assessment-review details{padding:14px 0}.assessment-review summary{color:#173f4d}.assessment-review p{margin:8px 0}
+@media(max-width:620px){.assessment-question h2{font-size:19px}.assessment-question{padding:15px}.assessment-question .choice{min-height:52px;padding:12px}}
