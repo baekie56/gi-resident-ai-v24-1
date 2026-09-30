@@ -1,5 +1,6 @@
 """Integration tests use a temporary database and local server; no external API calls."""
-import sys, tempfile, threading, unittest, json, urllib.request, urllib.error, http.cookiejar, os, base64
+import sys, tempfile, threading, unittest, json, urllib.request, urllib.error, http.cookiejar, os, base64, sqlite3
+from unittest import mock
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import backend as B
@@ -13,8 +14,8 @@ class BackendTest(unittest.TestCase):
         cls.server=B.ThreadingHTTPServer(('127.0.0.1',0),B.Handler)
         cls.base='http://127.0.0.1:'+str(cls.server.server_address[1]);cls.thread=threading.Thread(target=cls.server.serve_forever,daemon=True);cls.thread.start()
         cls.a=cls.client();cls.b=cls.client();cls.t=cls.client()
-        cls.ua=cls.request(cls.a,'/api/register',{'name':'learner-a','password':'OnlyForTests-24'})[1]['user']
-        cls.ub=cls.request(cls.b,'/api/register',{'name':'learner-b','password':'OnlyForTests-24'})[1]['user']
+        cls.ua=cls.request(cls.a,'/api/register',{'name':'learner-a','phone':'13800000001','password':'OnlyForTests-24'})[1]['user']
+        cls.ub=cls.request(cls.b,'/api/register',{'name':'learner-b','phone':'13800000002','password':'OnlyForTests-24'})[1]['user']
         cls.request(cls.t,'/api/login',{'name':'testteacher','password':'OnlyForTests-24'})
     @classmethod
     def tearDownClass(cls):cls.server.shutdown();cls.server.server_close();cls.thread.join();cls.tmp.cleanup()
@@ -38,7 +39,7 @@ class BackendTest(unittest.TestCase):
         old=os.environ.get('GI24_REGISTRATION_CODE');os.environ['GI24_REGISTRATION_CODE']='Class-Code-24'
         try:
             self.assertEqual(self.request(self.client(),'/api/register',{'name':'coded-wrong','password':'OnlyForTests-24','registrationCode':'wrong'})[0],403)
-            status,user,_=self.request(self.client(),'/api/register',{'name':'coded-user','password':'OnlyForTests-24','registrationCode':'Class-Code-24'})
+            status,user,_=self.request(self.client(),'/api/register',{'name':'coded-user','phone':'13800000003','password':'OnlyForTests-24','registrationCode':'Class-Code-24'})
             self.assertEqual(status,200);self.assertEqual(user['user']['role'],'resident')
         finally:
             if old is None:os.environ.pop('GI24_REGISTRATION_CODE',None)
@@ -129,5 +130,37 @@ class BackendTest(unittest.TestCase):
         status,result,_=self.request(self.t,'/api/admin/content/image',{'name':'x.png','mime':'image/png','data':png});self.assertEqual(status,200);self.assertTrue(result['src'].startswith('/api/content-assets/'))
         with self.a.open(self.base+result['src'],timeout=10) as response:self.assertEqual(response.status,200);self.assertEqual(response.headers.get_content_type(),'image/png');self.assertTrue(response.read().startswith(b'\x89PNG'))
         self.assertEqual(self.request(self.t,'/api/admin/content/image',{'name':'x.png','mime':'image/png','data':base64.b64encode(b'not-png').decode()})[0],400)
+
+    def test_20_phone_is_required_unique_and_not_exposed(self):
+        self.assertEqual(self.request(self.client(),'/api/register',{'name':'no-phone','password':'1'})[0],400)
+        self.assertEqual(self.request(self.client(),'/api/register',{'name':'duplicate-phone','phone':'13800000001','password':'1'})[0],409)
+        self.assertTrue(self.ua['phoneBound']);self.assertEqual(self.ua['maskedPhone'],'138****0001')
+        self.assertNotIn('13800000001',json.dumps(self.request(self.a,'/api/profile')[1]))
+
+    def test_21_password_can_be_short_and_reset_by_sms_code(self):
+        sent=[]
+        def capture(phone,code):sent.append((phone,code))
+        with mock.patch.object(B,'sms_configured',return_value=True),mock.patch.object(B,'send_sms_code',side_effect=capture):
+            status,_,_=self.request(self.client(),'/api/password-reset/request',{'phone':'13800000002'});self.assertEqual(status,200)
+        self.assertEqual(sent[0][0],'13800000002');self.assertRegex(sent[0][1],r'^\d{6}$')
+        status,_,_=self.request(self.client(),'/api/password-reset/confirm',{'phone':'13800000002','code':sent[0][1],'password':'7'});self.assertEqual(status,200)
+        self.assertEqual(self.request(self.client(),'/api/login',{'name':'learner-b','password':'OnlyForTests-24'})[0],401)
+        self.assertEqual(self.request(self.client(),'/api/login',{'name':'learner-b','password':'7'})[0],200)
+
+class SchemaMigrationTest(unittest.TestCase):
+    def test_existing_user_database_gains_phone_support(self):
+        with tempfile.TemporaryDirectory() as folder:
+            legacy=Path(folder)/'legacy.sqlite3'
+            c=sqlite3.connect(legacy)
+            try:c.execute('CREATE TABLE users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,role TEXT NOT NULL,salt TEXT NOT NULL,password_hash TEXT NOT NULL,participant_id TEXT NOT NULL UNIQUE,created REAL NOT NULL)');c.commit()
+            finally:c.close()
+            previous=B.DATABASE
+            try:
+                B.DATABASE=legacy;B.initialize()
+                with B.database() as c:
+                    columns={row[1] for row in c.execute('PRAGMA table_info(users)')}
+                    indexes={row[1] for row in c.execute('PRAGMA index_list(users)')}
+                self.assertIn('phone',columns);self.assertIn('idx_users_phone',indexes)
+            finally:B.DATABASE=previous
 
 if __name__=='__main__':unittest.main(verbosity=2)

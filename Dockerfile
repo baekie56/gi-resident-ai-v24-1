@@ -9,6 +9,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 RUN useradd --create-home --uid 10001 giapp && mkdir -p /data && chown giapp:giapp /data
+COPY requirements-server.txt /app/requirements-server.txt
+RUN pip install --no-cache-dir -r /app/requirements-server.txt
 COPY --chown=giapp:giapp backend.py /app/backend.py
 COPY --chown=giapp:giapp web /app/web
 

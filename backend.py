@@ -27,7 +27,7 @@ def initialize():
     with database() as c:
         c.executescript('''
         PRAGMA journal_mode=WAL;
-        CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,role TEXT NOT NULL,salt TEXT NOT NULL,password_hash TEXT NOT NULL,participant_id TEXT NOT NULL UNIQUE,created REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,role TEXT NOT NULL,salt TEXT NOT NULL,password_hash TEXT NOT NULL,participant_id TEXT NOT NULL UNIQUE,created REAL NOT NULL,phone TEXT);
         CREATE TABLE IF NOT EXISTS profiles(user_id TEXT PRIMARY KEY REFERENCES users(id),revision INTEGER NOT NULL DEFAULT 0,payload TEXT NOT NULL DEFAULT '{}',updated REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS attempts(id TEXT NOT NULL,user_id TEXT NOT NULL REFERENCES users(id),payload TEXT NOT NULL,received REAL NOT NULL,PRIMARY KEY(user_id,id));
         CREATE TABLE IF NOT EXISTS reviews(id INTEGER PRIMARY KEY,user_id TEXT NOT NULL,attempt_id TEXT NOT NULL,teacher_id TEXT NOT NULL REFERENCES users(id),status TEXT NOT NULL,note TEXT NOT NULL,created REAL NOT NULL,FOREIGN KEY(user_id,attempt_id) REFERENCES attempts(user_id,id));
@@ -35,6 +35,7 @@ def initialize():
         CREATE TABLE IF NOT EXISTS content_cases(id TEXT PRIMARY KEY,draft_payload TEXT NOT NULL,published_payload TEXT,status TEXT NOT NULL DEFAULT 'draft',version INTEGER NOT NULL DEFAULT 0,teacher_id TEXT NOT NULL REFERENCES users(id),created REAL NOT NULL,updated REAL NOT NULL,published REAL);
         CREATE TABLE IF NOT EXISTS content_revisions(id INTEGER PRIMARY KEY AUTOINCREMENT,case_id TEXT NOT NULL,version INTEGER NOT NULL,action TEXT NOT NULL,payload TEXT NOT NULL,teacher_id TEXT NOT NULL REFERENCES users(id),created REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS content_assets(id TEXT PRIMARY KEY,filename TEXT NOT NULL,mime TEXT NOT NULL,original_name TEXT NOT NULL,teacher_id TEXT NOT NULL REFERENCES users(id),created REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS sms_codes(phone TEXT NOT NULL,purpose TEXT NOT NULL,salt TEXT NOT NULL,code_hash TEXT NOT NULL,expires REAL NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,created REAL NOT NULL,PRIMARY KEY(phone,purpose));
         CREATE INDEX IF NOT EXISTS idx_attempts_user_received ON attempts(user_id,received);
         CREATE INDEX IF NOT EXISTS idx_reviews_user_created ON reviews(user_id,created);
         CREATE INDEX IF NOT EXISTS idx_activity_user_received ON activity_events(user_id,received);
@@ -42,19 +43,64 @@ def initialize():
         CREATE INDEX IF NOT EXISTS idx_content_status_updated ON content_cases(status,updated);
         CREATE INDEX IF NOT EXISTS idx_content_revision_case ON content_revisions(case_id,id);
         ''')
+        columns={row[1] for row in c.execute('PRAGMA table_info(users)')}
+        if 'phone' not in columns:c.execute('ALTER TABLE users ADD COLUMN phone TEXT')
+        c.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL')
     p=ROOT/'docs'/'patient_bank.json'
     if p.exists():CASE_BANK.update({x['id']:x for x in json.loads(p.read_text(encoding='utf-8'))})
 
 def password_hash(password,salt):
     return hashlib.pbkdf2_hmac('sha256',password.encode(),bytes.fromhex(salt),600_000).hex()
 
-def create_user(name,password,role='resident'):
+def clean_phone(phone):
+    phone=re.sub(r'[\s-]+','',phone if isinstance(phone,str) else '')
+    if phone.startswith('+86'):phone=phone[3:]
+    if not re.fullmatch(r'1[3-9]\d{9}',phone):raise ValueError('请输入正确的中国大陆手机号')
+    return phone
+
+def masked_phone(phone):return phone[:3]+'****'+phone[-4:] if phone else ''
+
+def sms_configured():
+    return all(os.environ.get(k) for k in ('ALIBABA_CLOUD_ACCESS_KEY_ID','ALIBABA_CLOUD_ACCESS_KEY_SECRET','GI24_SMS_SIGN_NAME','GI24_SMS_TEMPLATE_CODE'))
+
+def send_sms_code(phone,code):
+    if not sms_configured():raise RuntimeError('短信服务尚未开通')
+    from alibabacloud_dysmsapi20170525.client import Client as SmsClient
+    from alibabacloud_tea_openapi import models as open_api_models
+    from alibabacloud_dysmsapi20170525 import models as sms_models
+    from alibabacloud_tea_util import models as util_models
+    config=open_api_models.Config(access_key_id=os.environ['ALIBABA_CLOUD_ACCESS_KEY_ID'],access_key_secret=os.environ['ALIBABA_CLOUD_ACCESS_KEY_SECRET'])
+    config.endpoint='dysmsapi.aliyuncs.com'
+    client=SmsClient(config)
+    request=sms_models.SendSmsRequest(phone_numbers=phone,sign_name=os.environ['GI24_SMS_SIGN_NAME'],template_code=os.environ['GI24_SMS_TEMPLATE_CODE'],template_param=json.dumps({'code':code},ensure_ascii=False))
+    response=client.send_sms_with_options(request,util_models.RuntimeOptions())
+    if not response.body or response.body.code!='OK':raise RuntimeError('短信发送失败')
+
+def issue_sms_code(phone,purpose):
+    code=f'{secrets.randbelow(1_000_000):06d}';salt=secrets.token_hex(16)
+    send_sms_code(phone,code)
+    with database() as c:
+        now=time.time();c.execute('DELETE FROM sms_codes WHERE expires<?',(now,))
+        c.execute('INSERT OR REPLACE INTO sms_codes VALUES(?,?,?,?,?,?,?)',(phone,purpose,salt,password_hash(code,salt),now+600,0,now))
+
+def consume_sms_code(phone,purpose,code):
+    if not isinstance(code,str) or not re.fullmatch(r'\d{6}',code):return False
+    with database() as c:
+        row=c.execute('SELECT * FROM sms_codes WHERE phone=? AND purpose=?',(phone,purpose)).fetchone()
+        if not row or row['expires']<time.time() or row['attempts']>=5:return False
+        ok=hmac.compare_digest(password_hash(code,row['salt']),row['code_hash'])
+        if ok:c.execute('DELETE FROM sms_codes WHERE phone=? AND purpose=?',(phone,purpose))
+        else:c.execute('UPDATE sms_codes SET attempts=attempts+1 WHERE phone=? AND purpose=?',(phone,purpose))
+    return ok
+
+def create_user(name,password,role='resident',phone=None):
     name=name.strip().lower()
     if not (2<=len(name)<=24 and re.fullmatch(r'[\w .-]+',name,re.UNICODE)) or name in {'__proto__','constructor','prototype'}:raise ValueError('用户名格式错误')
-    if not isinstance(password,str) or not 10<=len(password)<=128:raise ValueError('密码需10—128位')
+    if not isinstance(password,str) or not 1<=len(password)<=128:raise ValueError('密码需1—128位')
+    phone=clean_phone(phone) if role=='resident' else None
     uid=secrets.token_hex(16);salt=secrets.token_hex(16);pid='P-'+secrets.token_hex(6).upper()
     with database() as c:
-        c.execute('INSERT INTO users VALUES(?,?,?,?,?,?,?)',(uid,name,role,salt,password_hash(password,salt),pid,time.time()))
+        c.execute('INSERT INTO users(id,username,role,salt,password_hash,participant_id,created,phone) VALUES(?,?,?,?,?,?,?,?)',(uid,name,role,salt,password_hash(password,salt),pid,time.time(),phone))
         c.execute('INSERT INTO profiles(user_id,updated) VALUES(?,?)',(uid,time.time()))
     return uid
 
@@ -76,7 +122,7 @@ def session_cookie(value,max_age):
     cookie=f'gi24_session={value}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}'
     return cookie+('; Secure' if secure_cookies() else '')
 
-def user_public(u):return {'id':u['id'],'name':u['username'],'role':u['role'],'participantId':u['participant_id']}
+def user_public(u):return {'id':u['id'],'name':u['username'],'role':u['role'],'participantId':u['participant_id'],'phoneBound':bool(u['phone']),'maskedPhone':masked_phone(u['phone'])}
 
 def clean_attempt(a):
     if not isinstance(a,dict) or not isinstance(a.get('id'),str) or not 1<=len(a['id'])<=100:raise ValueError('训练ID错误')
@@ -266,7 +312,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if not self.origin_ok():self.send_json({'error':'仅支持本机访问'},403);return
         route=urlsplit(self.path).path
-        if route=='/api/health':self.send_json({'ok':True,'version':VERSION,'accounts':True,'centralRecords':True,'contentManagement':True,'remoteAccess':bool(getattr(self.server,'allow_remote',False)),'registrationCodeRequired':bool(os.environ.get('GI24_REGISTRATION_CODE')),'ai':bool(os.environ.get('OPENAI_API_KEY') and os.environ.get('OPENAI_MODEL'))});return
+        if route=='/api/health':self.send_json({'ok':True,'version':VERSION,'accounts':True,'centralRecords':True,'contentManagement':True,'remoteAccess':bool(getattr(self.server,'allow_remote',False)),'registrationCodeRequired':bool(os.environ.get('GI24_REGISTRATION_CODE')),'passwordResetConfigured':sms_configured(),'phoneRequired':True,'ai':bool(os.environ.get('OPENAI_API_KEY') and os.environ.get('OPENAI_MODEL'))});return
         if route=='/api/me':
             u=self.require_user()
             if u:self.send_json({'user':user_public(u)})
@@ -317,7 +363,7 @@ class Handler(SimpleHTTPRequestHandler):
                     last_event=c.execute('SELECT MAX(received) FROM activity_events WHERE user_id=?',(x['id'],)).fetchone()[0]
                     latest=max([x['updated'],last_event or 0]+[a['received'] for a in attempt_rows])
                     profile=json.loads(x['payload']);profile.setdefault('v24',{})['attempts']=attempts
-                    rows.append({'name':x['username'],'userId':x['id'],'participantId':x['participant_id'],'createdAt':x['created'],'profile':profile,'summary':{'attempts':len(attempts),'completed':len(completed),'abandoned':len(attempts)-len(completed),'averageScore':round(sum(scored)/len(scored)) if scored else None,'totalSeconds':round(total_seconds),'pendingReview':sum(1 for a in completed if a.get('status') in {'pending-review','safety-review'}),'lastActive':latest}})
+                    rows.append({'name':x['username'],'userId':x['id'],'participantId':x['participant_id'],'maskedPhone':masked_phone(x['phone']),'createdAt':x['created'],'profile':profile,'summary':{'attempts':len(attempts),'completed':len(completed),'abandoned':len(attempts)-len(completed),'averageScore':round(sum(scored)/len(scored)) if scored else None,'totalSeconds':round(total_seconds),'pendingReview':sum(1 for a in completed if a.get('status') in {'pending-review','safety-review'}),'lastActive':latest}})
                 reviews=[dict(x) for x in c.execute('SELECT user_id,attempt_id,status,note,created FROM reviews ORDER BY id')]
                 events=[dict(event_public(x),userId=x['user_id']) for x in c.execute('SELECT * FROM activity_events ORDER BY received DESC LIMIT 2000')]
             self.send_json({'students':rows,'reviews':reviews,'events':events,'generatedAt':time.time()});return
@@ -334,9 +380,32 @@ class Handler(SimpleHTTPRequestHandler):
             if not isinstance(data,dict):raise ValueError('JSON必须是对象')
             self.post_route(urlsplit(self.path).path,data)
         except (ValueError,TypeError,KeyError):self.send_json({'error':'请求格式无效，请检查用户名、密码或记录格式'},400)
-        except sqlite3.IntegrityError:self.send_json({'error':'名称已存在或关联记录无效'},409)
+        except sqlite3.IntegrityError:self.send_json({'error':'用户名或手机号已被使用，或关联记录无效'},409)
         except Exception:self.send_json({'error':'服务器处理失败，记录未确认保存'},500)
     def post_route(self,route,d):
+        if route=='/api/password-reset/request':
+            if not sms_configured():self.send_json({'error':'短信找回服务尚未开通，请联系管理员'},503);return
+            phone=clean_phone(d.get('phone'))
+            if limited(('sms-ip',self.client_address[0]),5,600) or limited(('sms-phone',phone),3,600):self.send_json({'error':'验证码发送过于频繁，请稍后再试'},429);return
+            with database() as c:u=c.execute("SELECT * FROM users WHERE phone=? AND role='resident'",(phone,)).fetchone()
+            if u:
+                try:issue_sms_code(phone,'password-reset')
+                except Exception:self.send_json({'error':'短信暂时发送失败，请稍后再试'},502);return
+            self.send_json({'ok':True,'message':'如果该手机号已绑定账号，验证码将发送到手机'});return
+        if route=='/api/password-reset/confirm':
+            phone=clean_phone(d.get('phone'));code=d.get('code','');pwd=d.get('password','')
+            if not isinstance(pwd,str) or not 1<=len(pwd)<=128:raise ValueError('密码需1—128位')
+            if limited(('sms-confirm',self.client_address[0]),15,600):self.send_json({'error':'验证码尝试过于频繁，请稍后再试'},429);return
+            if not consume_sms_code(phone,'password-reset',code):self.send_json({'error':'验证码错误或已过期'},400);return
+            salt=secrets.token_hex(16)
+            with database() as c:
+                u=c.execute("SELECT * FROM users WHERE phone=? AND role='resident'",(phone,)).fetchone()
+                if not u:self.send_json({'error':'验证码错误或已过期'},400);return
+                c.execute('UPDATE users SET salt=?,password_hash=? WHERE id=?',(salt,password_hash(pwd,salt),u['id']))
+            with LOCK:
+                for token,item in list(SESSIONS.items()):
+                    if item[0]==u['id']:SESSIONS.pop(token,None)
+            self.send_json({'ok':True,'message':'密码已重设，请返回登录'});return
         if route in {'/api/register','/api/login'}:
             if limited(('auth',self.client_address[0]),30,300):self.send_json({'error':'尝试过于频繁，请5分钟后再试'},429);return
             name=d.get('name','').strip().lower();pwd=d.get('password','')
@@ -345,7 +414,7 @@ class Handler(SimpleHTTPRequestHandler):
                 supplied=d.get('registrationCode','')
                 if expected and (not isinstance(supplied,str) or not hmac.compare_digest(supplied,expected)):
                     self.send_json({'error':'班级注册码错误'},403);return
-                create_user(name,pwd)
+                create_user(name,pwd,phone=d.get('phone'))
             if not isinstance(pwd,str) or len(pwd)>128:raise ValueError('密码错误')
             with database() as c:u=c.execute('SELECT * FROM users WHERE username=?',(name,)).fetchone()
             check=password_hash(pwd,u['salt'] if u else '00'*16)
@@ -367,6 +436,12 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json({'ok':True},headers={'Set-Cookie':session_cookie('',0)});return
         u=self.require_user()
         if not u:return
+        if route=='/api/account/bind-phone':
+            if u['role']!='resident':self.send_json({'error':'管理员账户无需绑定手机号'},403);return
+            phone=clean_phone(d.get('phone'))
+            if u['phone']:self.send_json({'error':'手机号已经绑定，如需更换请联系管理员'},409);return
+            with database() as c:c.execute('UPDATE users SET phone=? WHERE id=?',(phone,u['id']))
+            self.send_json({'ok':True,'maskedPhone':masked_phone(phone)});return
         if route=='/api/profile':
             if u['role']!='resident':self.send_json({'error':'管理员账户不写入学员档案'},403);return
             p=profile_clean(d.get('profile'),u['participant_id']);revision=d.get('revision');attempts=p.get('v24',{}).get('attempts',[])
@@ -483,7 +558,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--port',type=int,default=int(os.environ.get('PORT','8000')));parser.add_argument('--host',choices=['127.0.0.1','0.0.0.0'],default='127.0.0.1');parser.add_argument('--create-teacher',action='store_true')
     args=parser.parse_args();initialize()
     if args.create_teacher:
-        name=input('Teacher username / 教师用户名: ').strip();pwd=getpass.getpass('Password (10+ characters) / 密码: ')
+        name=input('Teacher username / 教师用户名: ').strip();pwd=getpass.getpass('Password (1-128 characters) / 密码: ')
         if pwd!=getpass.getpass('Repeat password / 再次输入: '):raise SystemExit('Passwords do not match')
         create_user(name,pwd,'teacher');print('Teacher created / 教师账户已创建');return
     created=bootstrap_teacher()
